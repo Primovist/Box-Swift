@@ -144,14 +144,22 @@ jobs:
           TVOS_UPLOAD_OUTCOME: ${{ steps.upload-tvos.outcome }}
         run: |
           set -euo pipefail
-          for outcome in \
-            "$IOS_BUILD_OUTCOME" "$IOS_PACKAGE_OUTCOME" "$IOS_UPLOAD_OUTCOME" \
-            "$TVOS_BUILD_OUTCOME" "$TVOS_PACKAGE_OUTCOME" "$TVOS_UPLOAD_OUTCOME"; do
+          failed=0
+          for result in \
+            "iOS build:$IOS_BUILD_OUTCOME" \
+            "iOS package:$IOS_PACKAGE_OUTCOME" \
+            "iOS upload:$IOS_UPLOAD_OUTCOME" \
+            "tvOS build:$TVOS_BUILD_OUTCOME" \
+            "tvOS package:$TVOS_PACKAGE_OUTCOME" \
+            "tvOS upload:$TVOS_UPLOAD_OUTCOME"; do
+            step="${result%%:*}"
+            outcome="${result#*:}"
+            echo "$step: $outcome"
             if [[ "$outcome" != "success" ]]; then
-              echo "A platform build or IPA publication step did not succeed: $outcome" >&2
-              exit 1
+              failed=1
             fi
           done
+          exit "$failed"
 
   publish:
     name: Publish GitHub Release

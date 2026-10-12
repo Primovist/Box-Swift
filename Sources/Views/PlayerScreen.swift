@@ -340,7 +340,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
 
     private func parseMediaIfNeeded() {
         guard !request.isLive, let media = player.media else { return }
-        _ = VLCMediaParser.sharedParser().queueMedia(media, options: VLCMediaParsingOptions(rawValue: 1))
+        _ = VLCMediaParser.shared().queue(media, options: VLCMediaParsingOptions(rawValue: 1))
     }
 
     private func header(named name: String) -> String? {
