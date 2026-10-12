@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(FoundationXML)
 import FoundationXML
+#endif
 
 struct DanmakuComment: Identifiable, Hashable {
     enum Mode: Int, Hashable {

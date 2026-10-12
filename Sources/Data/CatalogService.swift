@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(FoundationXML)
 import FoundationXML
+#endif
 
 struct TVBoxCategoryResponse {
     let categories: [TVBoxCategory]
