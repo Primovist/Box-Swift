@@ -208,7 +208,7 @@ struct HomeView: View {
             LiveGroupPasswordSheet(group: group) { unlockedLiveGroups.insert(group.id) }
         }
         #endif
-        .onChange(of: section) { newValue in
+        .onChange(of: section) { _, newValue in
             #if os(iOS)
             isSectionNavigationCollapsed = false
             downwardScrollDistance = 0
@@ -217,7 +217,7 @@ struct HomeView: View {
             if newValue == .live { catalog.loadLive() }
             if newValue == .video { searchText = "" }
         }
-        .onChange(of: catalog.selectedSiteKey) { _ in
+        .onChange(of: catalog.selectedSiteKey) { _, _ in
             searchText = ""
             #if os(iOS)
             isSectionNavigationCollapsed = false

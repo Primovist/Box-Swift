@@ -234,13 +234,13 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         player.drawable = nil
     }
 
-    func mediaPlayerStateChanged(_ newState: VLCMediaPlayerState) {
+    nonisolated func mediaPlayerStateChanged(_ newState: VLCMediaPlayerState) {
         Task { @MainActor [weak self] in
             self?.refreshState(newState)
         }
     }
 
-    func mediaPlayerBufferingChanged(_ progress: Float) {
+    nonisolated func mediaPlayerBufferingChanged(_ progress: Float) {
         Task { @MainActor [weak self] in
             guard let self else { return }
             let percentage = progress <= 1 ? progress * 100 : progress
@@ -252,7 +252,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         }
     }
 
-    func mediaPlayerTimeChanged(_ aNotification: Notification) {
+    nonisolated func mediaPlayerTimeChanged(_ aNotification: Notification) {
         Task { @MainActor [weak self] in
             self?.refreshProgress()
         }
@@ -461,6 +461,13 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
 struct PlayerScreen: View {
     @EnvironmentObject private var catalog: CatalogStore
     @Environment(\.dismiss) private var dismiss
+#if os(iOS)
+    private var foregroundScreen: UIScreen? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }?.screen
+    }
+#endif
     @StateObject private var session: VLCPlaybackSession
     @State private var isScrubbing = false
     @State private var seekValue: Double = 0
@@ -625,13 +632,13 @@ struct PlayerScreen: View {
             session.stop()
         }
         .onReceive(historySaveTimer) { _ in persistPlaybackPosition() }
-        .onChange(of: session.didReachEnd) { reachedEnd in
+        .onChange(of: session.didReachEnd) { _, reachedEnd in
             guard reachedEnd, autoNextEpisode, !session.request.isLive,
                   session.request.queueIndex + 1 < session.request.queue.count else { return }
             moveToEpisode(1)
         }
-        .onChange(of: session.playbackGeneration) { _ in loadEpisodeDanmaku() }
-        .onChange(of: session.isPlaying) { playing in
+        .onChange(of: session.playbackGeneration) { _, _ in loadEpisodeDanmaku() }
+        .onChange(of: session.isPlaying) { _, playing in
             if playing {
                 revealControls()
             } else {
@@ -639,22 +646,22 @@ struct PlayerScreen: View {
                 withAnimation(.easeInOut(duration: 0.2)) { areControlsVisible = true }
             }
         }
-        .onChange(of: isScrubbing) { scrubbing in
+        .onChange(of: isScrubbing) { _, scrubbing in
             if scrubbing {
                 controlsHideTask?.cancel()
             } else {
                 revealControls()
             }
         }
-        .onChange(of: showingDanmakuSearch) { showing in
+        .onChange(of: showingDanmakuSearch) { _, showing in
             if showing { controlsHideTask?.cancel() }
             else if session.isPlaying { revealControls() }
         }
-        .onChange(of: showingDanmakuSettings) { showing in
+        .onChange(of: showingDanmakuSettings) { _, showing in
             if showing { controlsHideTask?.cancel() }
             else if session.isPlaying { revealControls() }
         }
-        .onChange(of: showingPlayerMenu) { showing in
+        .onChange(of: showingPlayerMenu) { _, showing in
             if showing { controlsHideTask?.cancel() }
             else if session.isPlaying { revealControls() }
         }
@@ -792,7 +799,7 @@ struct PlayerScreen: View {
                 isScrubbing = true
             } else if value.startLocation.x < size.width / 3 {
                 touchGesture = .brightness
-                touchStartBrightness = Double(UIScreen.main.brightness)
+                touchStartBrightness = Double(foregroundScreen?.brightness ?? 0.5)
             } else if value.startLocation.x >= size.width * 2 / 3 {
                 touchGesture = .volume
                 touchStartVolume = session.volume
@@ -808,7 +815,7 @@ struct PlayerScreen: View {
             showInteractionHUD("进度 \(Int(seekValue * 100))%", symbol: "timeline.selection")
         case .some(.brightness):
             let level = min(1, max(0, touchStartBrightness - Double(translation.height / max(1, size.height))))
-            UIScreen.main.brightness = CGFloat(level)
+            foregroundScreen?.brightness = CGFloat(level)
             showInteractionHUD("亮度 \(Int(level * 100))%", symbol: "sun.max.fill")
         case .some(.volume):
             let level = min(200, max(0, touchStartVolume - Double(translation.height / max(1, size.height)) * 200))

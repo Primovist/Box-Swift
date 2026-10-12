@@ -177,11 +177,11 @@ final class CatalogStore: ObservableObject {
                 guard !Task.isCancelled, generation == requestGeneration else { return }
                 invalidateLiveLoad()
                 configuration = loaded
-                if !loaded.parsers.contains(where: { $0.name == selectedParserName }) {
+                if !loaded.parsers.contains(where: { $0.name == self.selectedParserName }) {
                     selectParser("")
                 }
                 UserDefaults.standard.set(data, forKey: "tvbox.cachedConfiguration")
-                if !loaded.sites.contains(where: { $0.key == selectedSiteKey }) {
+                if !loaded.sites.contains(where: { $0.key == self.selectedSiteKey }) {
                     selectedSiteKey = loaded.sites.first?.key ?? ""
                 }
                 UserDefaults.standard.set(selectedSiteKey, forKey: "tvbox.selectedSite")
@@ -199,11 +199,11 @@ final class CatalogStore: ObservableObject {
                    let fallback = try? TVBoxConfiguration(data: cached) {
                     invalidateLiveLoad()
                     configuration = fallback
-                    if !fallback.parsers.contains(where: { $0.name == selectedParserName }) {
+                    if !fallback.parsers.contains(where: { $0.name == self.selectedParserName }) {
                         selectParser("")
                     }
                     liveGroups = fallback.liveGroups
-                    if !fallback.sites.contains(where: { $0.key == selectedSiteKey }) {
+                    if !fallback.sites.contains(where: { $0.key == self.selectedSiteKey }) {
                         selectedSiteKey = fallback.sites.first?.key ?? ""
                     }
                     loadMessage = "配置拉取失败，已使用上次保存的 tvbox.json。\n\(error.localizedDescription)"
