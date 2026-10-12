@@ -71,47 +71,98 @@ extension Color {
 }
 
 #if os(iOS)
+import UIKit
+
 struct EdgeSwipeBackModifier: ViewModifier {
-    @Environment(\.dismiss) private var dismiss
-    @State private var dragOffset: CGFloat = 0
-    let width: CGFloat
-
     func body(content: Content) -> some View {
-        content
-            .offset(x: dragOffset)
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 10, coordinateSpace: .local)
-                    .onChanged { value in
-                        guard value.startLocation.x <= 28,
-                              value.translation.width > 0,
-                              value.translation.width > abs(value.translation.height) else { return }
-                        dragOffset = min(width, value.translation.width)
-                    }
-                    .onEnded { value in
-                        let isEdgeSwipe = value.startLocation.x <= 28
-                            && value.translation.width > 0
-                            && value.translation.width > abs(value.translation.height)
-                        guard isEdgeSwipe else {
-                            dragOffset = 0
-                            return
-                        }
+        content.background {
+            NativeBackGestureEnabler()
+                .frame(width: 1, height: 1)
+                .opacity(0)
+        }
+    }
+}
 
-                        if value.translation.width > width * 0.30 || value.predictedEndTranslation.width > width * 0.42 {
-                            withAnimation(.easeOut(duration: 0.18)) { dragOffset = width }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { dismiss() }
-                        } else {
-                            withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.88)) {
-                                dragOffset = 0
-                            }
-                        }
-                    }
-            )
+private struct NativeBackGestureEnabler: UIViewControllerRepresentable {
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIViewController(context: Context) -> UIViewController {
+        BackGestureLifecycleController(coordinator: context.coordinator)
+    }
+
+    func updateUIViewController(_ controller: UIViewController, context: Context) {
+        context.coordinator.attach(to: controller.navigationController)
+    }
+
+    static func dismantleUIViewController(_ controller: UIViewController, coordinator: Coordinator) {
+        coordinator.restore()
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        private weak var navigationController: UINavigationController?
+        private weak var originalDelegate: UIGestureRecognizerDelegate?
+
+        func attach(to navigationController: UINavigationController?) {
+            guard let navigationController,
+                  let gesture = navigationController.interactivePopGestureRecognizer else { return }
+
+            if self.navigationController !== navigationController {
+                restore()
+                self.navigationController = navigationController
+                originalDelegate = gesture.delegate
+                gesture.delegate = self
+            } else if gesture.delegate !== self {
+                originalDelegate = gesture.delegate
+                gesture.delegate = self
+            }
+            gesture.isEnabled = navigationController.viewControllers.count > 1
+        }
+
+        func restore() {
+            guard let navigationController,
+                  let gesture = navigationController.interactivePopGestureRecognizer,
+                  gesture.delegate === self else { return }
+            gesture.isEnabled = navigationController.viewControllers.count > 1
+            gesture.delegate = originalDelegate
+            self.navigationController = nil
+            originalDelegate = nil
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard let navigationController,
+                  navigationController.viewControllers.count > 1,
+                  navigationController.transitionCoordinator == nil,
+                  let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
+            let velocity = pan.velocity(in: navigationController.view)
+            return velocity.x > 0 && abs(velocity.x) > abs(velocity.y)
+        }
+    }
+}
+
+private final class BackGestureLifecycleController: UIViewController {
+    private let coordinator: NativeBackGestureEnabler.Coordinator
+
+    init(coordinator: NativeBackGestureEnabler.Coordinator) {
+        self.coordinator = coordinator
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        coordinator.attach(to: navigationController)
     }
 }
 
 extension View {
-    func edgeSwipeBack(width: CGFloat) -> some View {
-        modifier(EdgeSwipeBackModifier(width: width))
+    func edgeSwipeBack(width _: CGFloat) -> some View {
+        modifier(EdgeSwipeBackModifier())
     }
 }
 #endif

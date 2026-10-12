@@ -26,8 +26,12 @@ struct VLCVideoSurface: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
-        coordinator.player.drawable = nil
-        coordinator.attachedView = nil
+        if (coordinator.player.drawable as? UIView) === uiView {
+            coordinator.player.drawable = nil
+        }
+        if coordinator.attachedView === uiView {
+            coordinator.attachedView = nil
+        }
     }
 
     final class Coordinator {

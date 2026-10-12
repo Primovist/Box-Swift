@@ -95,7 +95,10 @@ enum PosterImageCache {
                 "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1",
                 forHTTPHeaderField: "User-Agent"
             )
-            request.setValue("image/avif,image/webp,image/apng,image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
+            request.setValue("image/jpeg,image/png,image/gif,image/*;q=0.8,*/*;q=0.5", forHTTPHeaderField: "Accept")
+            if let scheme = url.scheme, let host = url.host {
+                request.setValue("\(scheme)://\(host)/", forHTTPHeaderField: "Referer")
+            }
             guard let (data, response) = try? await URLSession.shared.data(for: request),
                   (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true,
                   let image = UIImage(data: data) else { return nil }
@@ -177,11 +180,13 @@ private struct CachedPosterImage: View {
     @State private var image: UIImage?
 
     var body: some View {
-        Group {
+        ZStack {
             if let image {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
+            } else {
+                Color.clear
             }
         }
         .task(id: url) {
@@ -205,10 +210,13 @@ struct MediaCard: View {
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white)
                     .lineLimit(1)
-                Text("\(item.sourceName) · \(item.subtitle.isEmpty ? item.category : item.subtitle)")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Color.tvboxMuted)
-                    .lineLimit(1)
+                let metadata = item.subtitle.isEmpty ? item.category : item.subtitle
+                if !metadata.isEmpty {
+                    Text(metadata)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.tvboxMuted)
+                        .lineLimit(1)
+                }
             }
             .contentShape(RoundedRectangle(cornerRadius: 18))
         }

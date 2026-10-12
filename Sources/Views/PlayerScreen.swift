@@ -3,6 +3,8 @@ import Combine
 import VLCKit
 #if os(iOS)
 import UIKit
+import MediaPlayer
+import AVFAudio
 #endif
 
 struct VLCTrackOption: Identifiable, Hashable {
@@ -32,6 +34,43 @@ private enum PlayerTouchGesture: Equatable {
     case ignored
 }
 
+#if os(iOS)
+@MainActor
+private final class SystemVolumeController: ObservableObject {
+    private weak var slider: UISlider?
+
+    var volume: Double {
+        Double(AVAudioSession.sharedInstance().outputVolume) * 100
+    }
+
+    func attach(to volumeView: MPVolumeView) {
+        slider = volumeView.subviews.compactMap { $0 as? UISlider }.first
+    }
+
+    func setVolume(_ value: Double) {
+        guard let slider else { return }
+        slider.setValue(Float(min(1, max(0, value / 100))), animated: false)
+        slider.sendActions(for: .touchUpInside)
+        slider.sendActions(for: .valueChanged)
+    }
+}
+
+private struct SystemVolumeControl: UIViewRepresentable {
+    let controller: SystemVolumeController
+
+    func makeUIView(context: Context) -> MPVolumeView {
+        let volumeView = MPVolumeView(frame: .zero)
+        volumeView.showsRouteButton = false
+        Task { @MainActor in controller.attach(to: volumeView) }
+        return volumeView
+    }
+
+    func updateUIView(_ volumeView: MPVolumeView, context: Context) {
+        controller.attach(to: volumeView)
+    }
+}
+#endif
+
 @MainActor
 final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelegate {
     @Published private(set) var status = "准备连接"
@@ -42,6 +81,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     @Published private(set) var currentMilliseconds = 0
     @Published private(set) var playbackGeneration = 0
     @Published private(set) var canSeek = false
+    @Published private(set) var canSeekByTime = false
     @Published private(set) var title = ""
     @Published private(set) var audioTracks: [VLCTrackOption] = []
     @Published private(set) var subtitleTracks: [VLCTrackOption] = []
@@ -51,7 +91,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     @Published private(set) var isDanmakuBuffering = false
     @Published private(set) var danmakuClockRevision = 0
     @Published private(set) var didReachEnd = false
-    @Published private(set) var aspectRatioLabel = "比例"
+    @Published private(set) var aspectRatioLabel = "原始"
 
     let player: VLCMediaPlayer
     private(set) var request: PlaybackRequest
@@ -59,6 +99,13 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     private var danmakuClockPositionMilliseconds: Double = 0
     private var danmakuClockAnchorUptime = ProcessInfo.processInfo.systemUptime
     private var pendingDanmakuSeekTargetMilliseconds: Double?
+    private var pendingPositionSeekTargetFraction: Double?
+    private var pendingPositionSeekOriginFraction: Double?
+    private var pendingPositionSeekOriginMilliseconds: Double?
+    private var pendingDanmakuSeekStartedAt: TimeInterval?
+    private var latePositionSeekTargetFraction: Double?
+    private var latePositionSeekOriginFraction: Double?
+    private var latePositionSeekOriginMilliseconds: Double?
     private var danmakuSeekOriginMilliseconds: Double?
     private var danmakuSeekLastSampleMilliseconds: Double?
     private var danmakuSeekLastSampleUptime: TimeInterval?
@@ -69,14 +116,6 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
 
     var isDanmakuClockAdvancing: Bool {
         isPlaying && !isDanmakuBuffering
-    }
-
-    var volume: Double {
-        min(200, max(0, Double(player.audio?.volume ?? 100)))
-    }
-
-    func setVolume(_ value: Double) {
-        player.audio?.volume = Int32(min(200, max(0, value)))
     }
 
     func danmakuPlaybackTime(at uptime: TimeInterval) -> Double {
@@ -136,6 +175,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         elapsedText = "00:00"
         durationText = "--:--"
         canSeek = false
+        canSeekByTime = false
         didReachEnd = false
         updateDanmakuClockPlaybackState(isPlaying: false, isBuffering: false)
         resetDanmakuClock(to: 0, awaitingPlayerSample: true)
@@ -169,7 +209,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     }
 
     func seek(by seconds: Int) {
-        guard canSeek else { return }
+        guard canSeekByTime else { return }
         let duration = max(0, Int(player.media?.length.intValue ?? 0))
         let origin = Int(player.time.intValue)
         let target = min(duration, max(0, origin + seconds * 1_000))
@@ -181,7 +221,20 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     func seek(to fraction: Double) {
         guard canSeek else { return }
         let duration = max(0, Int(player.media?.length.intValue ?? 0))
-        let target = Int(Double(duration) * min(1, max(0, fraction)))
+        let boundedFraction = min(1, max(0, fraction))
+        guard duration > 0 || player.isSeekable else { return }
+        guard duration > 0 else {
+            clearPendingDanmakuSeek()
+            clearPositionSeek()
+            pendingPositionSeekTargetFraction = boundedFraction
+            pendingPositionSeekOriginFraction = Double(player.position)
+            pendingPositionSeekOriginMilliseconds = Double(max(0, player.time.intValue))
+            pendingDanmakuSeekStartedAt = ProcessInfo.processInfo.systemUptime
+            player.position = Float(boundedFraction)
+            refreshProgress()
+            return
+        }
+        let target = Int(Double(duration) * boundedFraction)
         let origin = Int(player.time.intValue)
         player.time = VLCTime(int: Int32(clamping: target))
         resetDanmakuClock(to: target, awaitingPlayerSample: true, originMilliseconds: origin)
@@ -361,9 +414,12 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         }
         currentMilliseconds = Int(current)
         elapsedText = Self.clockString(milliseconds: current)
-        durationText = total > 0 ? Self.clockString(milliseconds: total) : "LIVE"
-        progress = total > 0 ? min(1, Double(current) / Double(total)) : 0
-        canSeek = total > 0 && player.isSeekable
+        durationText = total > 0 ? Self.clockString(milliseconds: total) : (request.isLive ? "LIVE" : "--:--")
+        progress = total > 0
+            ? min(1, Double(current) / Double(total))
+            : (player.isSeekable && !request.isLive ? min(1, max(0, Double(player.position))) : 0)
+        canSeek = !request.isLive && player.isSeekable
+        canSeekByTime = !request.isLive && total > 0 && player.isSeekable
     }
 
     private func updateDanmakuClock(with sampledMilliseconds: Int32) {
@@ -371,21 +427,62 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         let predicted = danmakuPlaybackTime(at: now)
         let sample = Double(max(0, sampledMilliseconds))
 
+        if let target = pendingPositionSeekTargetFraction,
+           let originFraction = pendingPositionSeekOriginFraction,
+           let originMilliseconds = pendingPositionSeekOriginMilliseconds {
+            let elapsed = now - (pendingDanmakuSeekStartedAt ?? now)
+            if positionSeekLanded(
+                targetFraction: target,
+                originFraction: originFraction,
+                originMilliseconds: originMilliseconds,
+                elapsed: elapsed,
+                sampledMilliseconds: sample
+            ) {
+                clearPositionSeek()
+                anchorDanmakuClock(to: sample, at: now)
+                return
+            }
+            if elapsed >= 3 {
+                latePositionSeekTargetFraction = target
+                latePositionSeekOriginFraction = originFraction
+                latePositionSeekOriginMilliseconds = originMilliseconds
+                clearPendingPositionSeek()
+                anchorDanmakuClock(to: sample, at: now)
+                return
+            }
+            return
+        }
+
+        if let target = latePositionSeekTargetFraction,
+           let originFraction = latePositionSeekOriginFraction,
+           let originMilliseconds = latePositionSeekOriginMilliseconds,
+           positionSeekLanded(
+               targetFraction: target,
+               originFraction: originFraction,
+               originMilliseconds: originMilliseconds,
+               elapsed: now - (pendingDanmakuSeekStartedAt ?? now),
+               sampledMilliseconds: sample
+           ) {
+            clearLatePositionSeek()
+            anchorDanmakuClock(to: sample, at: now)
+            return
+        }
+
         if let seekTarget = pendingDanmakuSeekTargetMilliseconds {
-            var confirmedSeekSample = false
-            if isPlaying && !isDanmakuBuffering {
-                confirmedSeekSample = abs(sample - seekTarget) <= 750 || abs(sample - predicted) <= 1_500
-                if let origin = danmakuSeekOriginMilliseconds,
-                   let previousSample = danmakuSeekLastSampleMilliseconds,
-                   let previousSampleUptime = danmakuSeekLastSampleUptime {
-                    let previousElapsed = max(0, now - previousSampleUptime) * 1_000 * Double(playbackRate)
-                    let sampledChange = sample - previousSample
-                    let seekDirection = seekTarget - origin
-                    let movedInSeekDirection = seekDirection < 0
-                        ? sampledChange < -750
-                        : (seekDirection > 0 ? sampledChange > previousElapsed + 1_500 : false)
-                    confirmedSeekSample = confirmedSeekSample || movedInSeekDirection
-                }
+            var confirmedSeekSample = abs(sample - seekTarget) <= 750
+            if let origin = danmakuSeekOriginMilliseconds,
+               let previousSample = danmakuSeekLastSampleMilliseconds,
+               let previousSampleUptime = danmakuSeekLastSampleUptime {
+                let isAdvancing = isPlaying && !isDanmakuBuffering
+                let previousElapsed = isAdvancing
+                    ? max(0, now - previousSampleUptime) * 1_000 * Double(playbackRate)
+                    : 0
+                let sampledChange = sample - previousSample
+                let seekDirection = seekTarget - origin
+                let movedInSeekDirection = seekDirection < 0
+                    ? sampledChange < -750
+                    : (seekDirection > 0 ? sampledChange > previousElapsed + 1_500 : false)
+                confirmedSeekSample = confirmedSeekSample || movedInSeekDirection
             }
 
             if confirmedSeekSample {
@@ -423,11 +520,14 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     ) {
         let now = ProcessInfo.processInfo.systemUptime
         let position = Double(max(0, milliseconds))
+        clearPositionSeek()
         anchorDanmakuClock(
             to: position,
             at: now
         )
         pendingDanmakuSeekTargetMilliseconds = awaitingPlayerSample ? position : nil
+        pendingPositionSeekOriginMilliseconds = nil
+        pendingDanmakuSeekStartedAt = awaitingPlayerSample ? now : nil
         danmakuSeekOriginMilliseconds = awaitingPlayerSample ? originMilliseconds.map(Double.init) : nil
         danmakuSeekLastSampleMilliseconds = awaitingPlayerSample ? originMilliseconds.map(Double.init) : nil
         danmakuSeekLastSampleUptime = awaitingPlayerSample && originMilliseconds != nil ? now : nil
@@ -435,9 +535,57 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
 
     private func clearPendingDanmakuSeek() {
         pendingDanmakuSeekTargetMilliseconds = nil
+        pendingDanmakuSeekStartedAt = nil
         danmakuSeekOriginMilliseconds = nil
         danmakuSeekLastSampleMilliseconds = nil
         danmakuSeekLastSampleUptime = nil
+    }
+
+    private func clearPendingPositionSeek() {
+        pendingPositionSeekTargetFraction = nil
+        pendingPositionSeekOriginFraction = nil
+        pendingPositionSeekOriginMilliseconds = nil
+    }
+
+    private func clearLatePositionSeek() {
+        latePositionSeekTargetFraction = nil
+        latePositionSeekOriginFraction = nil
+        latePositionSeekOriginMilliseconds = nil
+    }
+
+    private func clearPositionSeek() {
+        clearPendingPositionSeek()
+        clearLatePositionSeek()
+    }
+
+    private func positionSeekLanded(
+        targetFraction: Double,
+        originFraction: Double,
+        originMilliseconds: Double,
+        elapsed: TimeInterval,
+        sampledMilliseconds: Double
+    ) -> Bool {
+        let currentFraction = Double(player.position)
+        guard abs(currentFraction - targetFraction) <= 0.025 else { return false }
+        if originFraction > 0.03 {
+            let estimatedDuration = originMilliseconds / originFraction
+            let targetMilliseconds = targetFraction * estimatedDuration
+            if targetFraction < originFraction {
+                return sampledMilliseconds <= targetMilliseconds + 1_000
+            }
+            if targetFraction > originFraction {
+                return sampledMilliseconds >= targetMilliseconds - 1_500
+            }
+            return true
+        }
+        let expectedNaturalTime = originMilliseconds + elapsed * 1_000 * Double(playbackRate)
+        if targetFraction < originFraction {
+            return sampledMilliseconds < originMilliseconds - 750
+        }
+        if targetFraction > originFraction {
+            return sampledMilliseconds > expectedNaturalTime + 750
+        }
+        return true
     }
 
     private func anchorDanmakuClock(to milliseconds: Double, at uptime: TimeInterval) {
@@ -462,6 +610,7 @@ struct PlayerScreen: View {
     @EnvironmentObject private var catalog: CatalogStore
     @Environment(\.dismiss) private var dismiss
 #if os(iOS)
+    @State private var systemVolumeController = SystemVolumeController()
     private var foregroundScreen: UIScreen? {
         UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
@@ -510,74 +659,94 @@ struct PlayerScreen: View {
 
     var body: some View {
         GeometryReader { geometry in
+            #if os(iOS)
+            let isPortraitLayout = geometry.size.height > geometry.size.width
+            #else
+            let isPortraitLayout = false
+            #endif
             ZStack {
                 Color.black.ignoresSafeArea()
-                VLCVideoSurface(player: session.player)
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
-                    .zIndex(0)
-                #if os(iOS)
-                touchInteractionLayer(size: geometry.size)
-                    .ignoresSafeArea()
-                    .zIndex(1)
-                #endif
-                DanmakuOverlay(session: session, comments: danmakuComments, generation: danmakuGeneration)
-                    .ignoresSafeArea()
-                    .zIndex(1)
+                VStack(spacing: 0) {
+                    ZStack {
+                        VLCVideoSurface(player: session.player)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .allowsHitTesting(false)
+                            .zIndex(0)
+                        DanmakuOverlay(session: session, comments: danmakuComments, generation: danmakuGeneration)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .allowsHitTesting(false)
+                            .zIndex(1)
+                        #if os(iOS)
+                        GeometryReader { interaction in
+                            touchInteractionLayer(size: interaction.size)
+                        }
+                        .zIndex(1)
+                        #endif
 
-                if areControlsVisible {
-                    Group {
-                    #if os(iOS)
-                    if geometry.size.height > geometry.size.width {
-                        ZStack {
-                            VStack(spacing: 0) {
-                                header
-                                Spacer(minLength: 22)
-                                if session.status == "播放失败" {
-                                    failureCard
+                        if areControlsVisible {
+                            Group {
+                                #if os(iOS)
+                                if isPortraitLayout {
+                                    VStack(spacing: 0) {
+                                        header
+                                        Spacer(minLength: 0)
+                                        if session.status == "播放失败" { failureCard }
+                                        Spacer(minLength: 0)
+                                    }
+                                    .padding(.horizontal, playerPadding(compact: true))
+                                    .padding(.top, playerPadding(compact: true))
+                                } else {
+                                    VStack(spacing: 0) {
+                                        header
+                                        Spacer(minLength: 22)
+                                        if session.status == "播放失败" { failureCard }
+                                        Spacer(minLength: 22)
+                                        controlPanel(compact: geometry.size.width < 600)
+                                    }
+                                    .padding(.horizontal, playerPadding(compact: geometry.size.width < 600))
+                                    .padding(.top, playerPadding(compact: geometry.size.width < 600))
+                                    .padding(.bottom, playerPadding(compact: geometry.size.width < 600))
                                 }
-                                Spacer(minLength: 22)
-                                controlPanel(compact: true, includesTransportControls: false)
+                                #else
+                                VStack(spacing: 0) {
+                                    header
+                                    Spacer(minLength: 22)
+                                    if session.status == "播放失败" { failureCard }
+                                    Spacer(minLength: 22)
+                                    controlPanel(compact: geometry.size.width < 600)
+                                }
+                                .padding(.horizontal, playerPadding(compact: geometry.size.width < 600))
+                                .padding(.top, playerPadding(compact: geometry.size.width < 600))
+                                .padding(.bottom, playerPadding(compact: geometry.size.width < 600))
+                                #endif
                             }
-                            if session.status != "播放失败" {
-                                transportControls(compact: true, centered: true)
-                            }
+                            .transition(.opacity)
+                            .zIndex(2)
                         }
-                        .padding(.horizontal, playerPadding(compact: true))
-                        .padding(.top, playerPadding(compact: true))
-                        .padding(.bottom, playerPadding(compact: true))
-                    } else {
-                        VStack(spacing: 0) {
-                            header
-                            Spacer(minLength: 22)
-                            if session.status == "播放失败" {
-                                failureCard
-                            }
-                            Spacer(minLength: 22)
-                            controlPanel(compact: geometry.size.width < 600)
-                        }
-                        .padding(.horizontal, playerPadding(compact: geometry.size.width < 600))
-                        .padding(.top, playerPadding(compact: geometry.size.width < 600))
-                        .padding(.bottom, playerPadding(compact: geometry.size.width < 600))
                     }
-                    #else
-                    VStack(spacing: 0) {
-                        header
-                        Spacer(minLength: 22)
-                        if session.status == "播放失败" {
-                            failureCard
-                        }
-                        Spacer(minLength: 22)
-                        controlPanel(compact: geometry.size.width < 600)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    #if os(iOS)
+                    if isPortraitLayout && areControlsVisible {
+                        controlPanel(compact: true)
+                            .padding(.horizontal, playerPadding(compact: true))
+                            .padding(.top, 10)
+                            .padding(.bottom, playerPadding(compact: true))
+                            .transition(.opacity)
                     }
-                    .padding(.horizontal, playerPadding(compact: geometry.size.width < 600))
-                    .padding(.top, playerPadding(compact: geometry.size.width < 600))
-                    .padding(.bottom, playerPadding(compact: geometry.size.width < 600))
                     #endif
-                    }
-                    .transition(.opacity)
-                    .zIndex(2)
                 }
+                .ignoresSafeArea(edges: isPortraitLayout ? [] : .all)
+                .zIndex(0)
+                #if os(iOS)
+                SystemVolumeControl(controller: systemVolumeController)
+                    .frame(width: 120, height: 24)
+                    .opacity(0.01)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                    .offset(x: -500, y: -500)
+                    .zIndex(4)
+                #endif
 
                 #if os(tvOS)
                 if !areControlsVisible {
@@ -617,7 +786,7 @@ struct PlayerScreen: View {
         }
         .onAppear {
             let option = Self.aspectRatios.first { $0.value == savedAspectRatio }
-            session.setAspectRatio(option?.value.isEmpty == false ? option?.value : nil, label: option?.label ?? "比例")
+            session.setAspectRatio(option?.value.isEmpty == false ? option?.value : nil, label: option?.label ?? "原始")
             session.play()
             loadEpisodeDanmaku()
             #if os(tvOS)
@@ -763,14 +932,14 @@ struct PlayerScreen: View {
 
     private func handleDoubleTap(at x: CGFloat, width: CGFloat) {
         if x < width / 3 {
-            if session.canSeek {
+            if session.canSeekByTime {
                 session.seek(by: -15)
                 showInteractionHUD("−15 秒", symbol: "gobackward.15")
             } else {
                 showInteractionHUD("当前内容无法快退", symbol: "gobackward.15")
             }
         } else if x >= width * 2 / 3 {
-            if session.canSeek {
+            if session.canSeekByTime {
                 session.seek(by: 15)
                 showInteractionHUD("+15 秒", symbol: "goforward.15")
             } else {
@@ -802,7 +971,7 @@ struct PlayerScreen: View {
                 touchStartBrightness = Double(foregroundScreen?.brightness ?? 0.5)
             } else if value.startLocation.x >= size.width * 2 / 3 {
                 touchGesture = .volume
-                touchStartVolume = session.volume
+                touchStartVolume = systemVolumeController.volume
             } else {
                 touchGesture = .ignored
                 return
@@ -818,8 +987,8 @@ struct PlayerScreen: View {
             foregroundScreen?.brightness = CGFloat(level)
             showInteractionHUD("亮度 \(Int(level * 100))%", symbol: "sun.max.fill")
         case .some(.volume):
-            let level = min(200, max(0, touchStartVolume - Double(translation.height / max(1, size.height)) * 200))
-            session.setVolume(level)
+            let level = min(100, max(0, touchStartVolume - Double(translation.height / max(1, size.height)) * 100))
+            systemVolumeController.setVolume(level)
             showInteractionHUD("音量 \(Int(level))%", symbol: level == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
         case .some(.ignored), .none:
             break
@@ -961,7 +1130,10 @@ struct PlayerScreen: View {
             }
 
             if compact {
-                ScrollView(.horizontal, showsIndicators: false) { playbackOptions }
+                HStack(spacing: 8) {
+                    aspectRatioMenu
+                    ScrollView(.horizontal, showsIndicators: false) { additionalPlaybackOptions }
+                }
             } else {
                 playbackOptions
             }
@@ -988,7 +1160,7 @@ struct PlayerScreen: View {
                     .disabled(isSwitchingEpisode)
             }
             controlButton(title: "后退 15 秒", systemImage: "gobackward.15") { session.seek(by: -15) }
-                .disabled(!session.canSeek)
+                .disabled(!session.canSeekByTime)
             Button {
                 revealControls()
                 session.togglePlayback()
@@ -1003,7 +1175,7 @@ struct PlayerScreen: View {
             #endif
             .accessibilityLabel(session.isPlaying ? "暂停" : "播放")
             controlButton(title: "前进 15 秒", systemImage: "goforward.15") { session.seek(by: 15) }
-                .disabled(!session.canSeek)
+                .disabled(!session.canSeekByTime)
             if session.request.queueIndex + 1 < session.request.queue.count {
                 controlButton(title: session.request.isLive ? "下一频道" : "下一集", systemImage: "forward.end.fill") { moveToEpisode(1) }
                     .disabled(isSwitchingEpisode)
@@ -1037,6 +1209,13 @@ struct PlayerScreen: View {
 
     private var playbackOptions: some View {
         HStack(spacing: 9) {
+            aspectRatioMenu
+            additionalPlaybackOptions
+        }
+    }
+
+    private var additionalPlaybackOptions: some View {
+        HStack(spacing: 9) {
             if session.request.availableLines.count > 1 {
                 lineMenu
             }
@@ -1060,7 +1239,6 @@ struct PlayerScreen: View {
                 }
                 #endif
             }
-            aspectRatioMenu
             if !session.request.isLive {
                 danmakuMenu
             }
@@ -1178,7 +1356,7 @@ struct PlayerScreen: View {
     }
 
     private static let aspectRatios = [
-        AspectRatioOption(label: "默认", value: ""),
+        AspectRatioOption(label: "原始", value: ""),
         AspectRatioOption(label: "16:9", value: "16:9"),
         AspectRatioOption(label: "4:3", value: "4:3"),
         AspectRatioOption(label: "1:1", value: "1:1"),

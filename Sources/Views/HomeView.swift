@@ -20,6 +20,7 @@ struct HomeView: View {
     @EnvironmentObject private var catalog: CatalogStore
     @AppStorage("tvbox.searchAcrossSites") private var searchAcrossSites = true
     @State private var searchText = ""
+    @State private var showingSearch = false
     @State private var section: HomeSection = .video
     #if os(iOS)
     @State private var isSectionNavigationCollapsed = false
@@ -76,10 +77,6 @@ struct HomeView: View {
                                 header(wide: wide)
                                 #endif
 
-                                if section == .video, searchText.isEmpty, !catalog.recentSearches.isEmpty {
-                                    searchHistorySection
-                                }
-
                                 if section == .video {
                                     if !catalog.categories.isEmpty { categoryPicker(wide: wide) }
                                     if catalog.selectedSite?.filterable == true,
@@ -122,6 +119,7 @@ struct HomeView: View {
                             .padding(.bottom, 48)
                             .frame(maxWidth: .infinity)
                         }
+                        .id(section)
                         #if os(iOS)
                         .onScrollGeometryChange(for: HomeScrollMetrics.self) { geometry in
                             HomeScrollMetrics(
@@ -141,6 +139,15 @@ struct HomeView: View {
                 #if os(iOS)
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     sectionNavigationBar
+                }
+                .sheet(isPresented: $showingSearch) {
+                    searchSheet
+                        .presentationDetents([.medium, .large])
+                        .presentationDragIndicator(.visible)
+                }
+                #else
+                .fullScreenCover(isPresented: $showingSearch) {
+                    searchSheet
                 }
                 #endif
             }
@@ -234,20 +241,57 @@ struct HomeView: View {
                 brand
                 Spacer(minLength: 8)
                 sitePicker
-                searchField
-                    .frame(maxWidth: 330)
+                searchButton
                 settingsLink
             }
         } else {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 12) {
-                    brand
+            HStack(spacing: 10) {
+                brand
+                Spacer(minLength: 0)
+                sitePicker
+                searchButton
+                settingsLink
+            }
+        }
+    }
+
+    private var searchButton: some View {
+        Button {
+            showingSearch = true
+        } label: {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 46, height: 46)
+                .background(.white.opacity(0.08), in: Circle())
+        }
+        .buttonStyle(FocusAwareButtonStyle())
+        .accessibilityLabel("搜索片名")
+    }
+
+    private var searchSheet: some View {
+        ZStack {
+            ScreenBackground()
+            VStack(alignment: .leading, spacing: 18) {
+                HStack {
+                    Text("搜索影视")
+                        .font(.system(size: 23, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
                     Spacer()
-                    sitePicker
-                    settingsLink
+                    Button("完成") { showingSearch = false }
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color.tvboxCyan)
+                        .buttonStyle(FocusAwareButtonStyle())
                 }
                 searchField
+                if !catalog.recentSearches.isEmpty {
+                    searchHistorySection
+                }
+                Spacer(minLength: 0)
             }
+            .padding(.horizontal, 22)
+            .padding(.top, 24)
+            .frame(maxWidth: 700, maxHeight: .infinity, alignment: .top)
         }
     }
 
@@ -674,7 +718,7 @@ struct HomeView: View {
             MediaArtwork(item: item, wide: true)
                 .frame(width: 410, height: 250)
             VStack(alignment: .leading, spacing: 13) {
-                SectionEyebrow(text: "\(item.sourceName) · \(item.category.isEmpty ? "推荐" : item.category)")
+                SectionEyebrow(text: item.category.isEmpty ? "推荐" : item.category)
                 Text(item.title)
                     .font(.system(size: 36, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
@@ -783,7 +827,10 @@ struct HomeView: View {
                 Image(systemName: "dot.radiowaves.left.and.right").foregroundStyle(Color.tvboxCyan)
             }
             VStack(alignment: .leading, spacing: 4) {
-                Text(channel.name).font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
+                Text(channel.name)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
                 Text("\(channel.sources.count) 条线路").font(.system(size: 11)).foregroundStyle(Color.tvboxMuted)
             }
             Spacer(minLength: 0)
@@ -808,8 +855,6 @@ struct HomeView: View {
     private var footer: some View {
         HStack(spacing: 8) {
             Circle().fill(Color.tvboxCyan).frame(width: 7, height: 7)
-            Text(catalog.selectedSite?.name ?? (catalog.sourceURL.isEmpty ? "内置演示目录" : "tvbox.json"))
-            Text("·")
             Text("iOS / tvOS")
         }
         .font(.system(size: 11, weight: .medium))
@@ -819,6 +864,7 @@ struct HomeView: View {
     private func submitSearch() {
         section = .video
         catalog.search(searchText, acrossAllSites: searchAcrossSites)
+        showingSearch = false
     }
 
     private var searchHistorySection: some View {

@@ -16,7 +16,7 @@ struct DanmakuOverlay: View {
     var body: some View {
         GeometryReader { geometry in
             let key = layoutKey(for: geometry.size)
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !isEnabled || !session.isDanmakuClockAdvancing || placements.isEmpty)) { _ in
+            TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isEnabled || !session.isDanmakuClockAdvancing || placements.isEmpty)) { _ in
                 Canvas { context, size in
                     guard isEnabled, !placements.isEmpty else { return }
                     let time = session.danmakuPlaybackTime(at: ProcessInfo.processInfo.systemUptime)
@@ -74,14 +74,9 @@ struct DanmakuOverlay: View {
             let text = Text(comment.text)
                 .font(font)
                 .foregroundColor(hue)
-            let shadowText = Text(comment.text)
-                .font(font)
-                .foregroundColor(.black)
             let resolved = context.resolve(text)
-            let resolvedShadow = context.resolve(shadowText)
-            let measured = resolved.measure(in: CGSize(width: size.width * 3, height: size.height))
-            let textWidth = max(fontSize, Double(measured.width))
-            let textHeight = max(fontSize, Double(measured.height))
+            let textWidth = max(fontSize, placement.estimatedTextWidth)
+            let textHeight = fontSize * 1.25
             let progress = min(1, max(0, localTime / max(0.1, duration)))
             let lane = placement.lane % availableLanes
             let point: CGPoint
@@ -127,11 +122,7 @@ struct DanmakuOverlay: View {
 
             var layer = context
             layer.opacity = min(1, max(0, commentOpacity))
-            layer.draw(
-                resolvedShadow,
-                at: CGPoint(x: point.x + 1, y: point.y + 1),
-                anchor: .center
-            )
+            layer.addFilter(.shadow(color: .black.opacity(0.9), radius: 1, x: 1, y: 1))
             layer.draw(resolved, at: point, anchor: .center)
         }
     }

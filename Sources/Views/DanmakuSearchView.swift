@@ -23,103 +23,83 @@ struct DanmakuSearchView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                ScreenBackground()
-                VStack(alignment: .leading, spacing: 16) {
-                    if !mediaTitle.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("当前播放")
-                                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                                .foregroundStyle(Color.tvboxCyan)
-                            Text(playbackContext)
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(Color.tvboxMuted)
-                                .lineLimit(2)
+            GeometryReader { geometry in
+                let compact = geometry.size.width > geometry.size.height
+                ZStack {
+                    ScreenBackground()
+                    VStack(alignment: .leading, spacing: compact ? 8 : 16) {
+                        if !compact && !mediaTitle.isEmpty {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("当前播放")
+                                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(Color.tvboxCyan)
+                                Text(playbackContext)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(Color.tvboxMuted)
+                                    .lineLimit(2)
+                            }
                         }
-                    }
-                    HStack(spacing: 10) {
-                        searchField
-                        Button {
-                            Task { await search() }
-                        } label: {
-                            Label("搜索", systemImage: "magnifyingglass")
-                        }
-                        .buttonStyle(PrimaryActionStyle())
-                        .disabled(isLoading || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || apiAddress.isEmpty)
-                    }
 
-                    if apiAddress.isEmpty {
-                        VStack(spacing: 10) {
-                            Image(systemName: "captions.bubble")
-                                .font(.system(size: 28))
-                                .foregroundStyle(Color.tvboxCyan)
-                            Text("未配置弹幕源")
-                                .font(.system(size: 17, weight: .semibold))
-                                .foregroundStyle(.white)
-                            Text("请先在设置中填写 DandanPlay 兼容的 danmu_api 地址。")
-                                .font(.system(size: 12))
-                                .foregroundStyle(Color.tvboxMuted)
-                                .multilineTextAlignment(.center)
+                        HStack(spacing: compact ? 8 : 10) {
+                            searchField
+                            Button {
+                                Task { await search() }
+                            } label: {
+                                if compact {
+                                    Image(systemName: "magnifyingglass")
+                                        .font(.system(size: 16, weight: .semibold))
+                                        .frame(width: 44, height: 44)
+                                        .background(Color.tvboxAccent, in: Circle())
+                                } else {
+                                    Label("搜索", systemImage: "magnifyingglass")
+                                        .font(.system(size: 15, weight: .bold))
+                                        .padding(.horizontal, 22)
+                                        .frame(minHeight: 48)
+                                        .background(Color.tvboxAccent, in: Capsule())
+                                }
+                            }
+                            .buttonStyle(FocusAwareButtonStyle())
+                            .disabled(isLoading || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || apiAddress.isEmpty)
+                            .accessibilityLabel("搜索弹幕源作品")
                         }
-                        .frame(maxWidth: .infinity, minHeight: 140)
-                    } else if isLoading {
-                        ProgressView(message ?? "正在搜索…")
-                            .tint(.white)
-                            .frame(maxWidth: .infinity, minHeight: 140)
-                    } else if let message {
-                        Text(message)
-                            .font(.system(size: 13))
+
+                        if apiAddress.isEmpty {
+                            Group {
+                                if compact {
+                                    Text("未配置弹幕源，请在设置中填写 DandanPlay 兼容地址。")
+                                        .font(.system(size: 11))
+                                        .lineLimit(1)
+                                } else {
+                                    Text("未配置弹幕源。请先在设置中填写 DandanPlay 兼容的 danmu_api 地址。")
+                                        .font(.system(size: 12))
+                                        .multilineTextAlignment(.center)
+                                }
+                            }
                             .foregroundStyle(Color.tvboxMuted)
-                            .frame(maxWidth: .infinity, minHeight: 90, alignment: .leading)
-                    }
-
-                    ScrollView {
-                        LazyVStack(spacing: 9) {
-                            if let selectedAnime {
-                                Button {
-                                    self.selectedAnime = nil
-                                    episodeResults = []
-                                    message = animeResults.isEmpty ? nil : "选择作品后，再选择对应集数。"
-                                } label: {
-                                    Label("返回作品列表 · \(selectedAnime.title)", systemImage: "chevron.left")
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                                .buttonStyle(FocusAwareButtonStyle())
+                            .frame(maxWidth: .infinity, alignment: compact ? .leading : .center)
+                        } else if isLoading {
+                            HStack(spacing: 8) {
+                                ProgressView().tint(.white)
+                                Text(message ?? "正在搜索…")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(Color.tvboxMuted)
+                                    .lineLimit(1)
                             }
-
-                            if selectedAnime == nil {
-                                ForEach(animeResults) { anime in
-                                    resultButton(title: anime.title, subtitle: animeSubtitle(anime), icon: "film") {
-                                        Task { await loadEpisodes(for: anime) }
-                                    }
-                                }
-                            } else {
-                                if let selectedAnime {
-                                    Text("已选择：\(selectedAnime.title) · \(animeSubtitle(selectedAnime))")
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(Color.tvboxCyan)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .lineLimit(2)
-                                }
-                                ForEach(orderedEpisodeResults) { episode in
-                                    let suggested = suggestedEpisodeIDs.contains(episode.id)
-                                    resultButton(
-                                        title: episode.title,
-                                        subtitle: suggested ? "与当前第 \(currentEpisodeNumber ?? 0) 集相符 · 点击确认" : "选择此集加载弹幕",
-                                        icon: suggested ? "checkmark.circle.fill" : "play.rectangle"
-                                    ) {
-                                        Task { await loadComments(for: episode) }
-                                    }
-                                }
-                            }
+                        } else if let message {
+                            Text(message)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Color.tvboxMuted)
+                                .lineLimit(compact ? 1 : 2)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .frame(maxWidth: 900)
-                        .frame(maxWidth: .infinity)
+
+                        resultsList
                     }
+                    .padding(.horizontal, compact ? 22 : 22)
+                    .padding(.vertical, compact ? 8 : 18)
+                    .frame(maxWidth: 1000, maxHeight: .infinity, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .padding(.horizontal, 22)
-                .padding(.vertical, 18)
-                .frame(maxWidth: 1000, maxHeight: .infinity, alignment: .topLeading)
             }
             .navigationTitle("在线搜索弹幕")
             #if os(iOS)
@@ -136,6 +116,46 @@ struct DanmakuSearchView: View {
             }
             .onDisappear { requestGeneration += 1 }
         }
+    }
+
+    private var resultsList: some View {
+        ScrollView {
+            LazyVStack(spacing: 9) {
+                if let selectedAnime {
+                    Button {
+                        self.selectedAnime = nil
+                        episodeResults = []
+                        message = animeResults.isEmpty ? nil : "选择作品后，再选择对应集数。"
+                    } label: {
+                        Label("返回作品列表 · \(selectedAnime.title)", systemImage: "chevron.left")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(FocusAwareButtonStyle())
+                }
+
+                if selectedAnime == nil {
+                    ForEach(animeResults) { anime in
+                        resultButton(title: anime.title, subtitle: animeSubtitle(anime), icon: "film") {
+                            Task { await loadEpisodes(for: anime) }
+                        }
+                    }
+                } else {
+                    ForEach(orderedEpisodeResults) { episode in
+                        let suggested = suggestedEpisodeIDs.contains(episode.id)
+                        resultButton(
+                            title: episode.title,
+                            subtitle: suggested ? "与当前第 \(currentEpisodeNumber ?? 0) 集相符 · 点击确认" : "选择此集加载弹幕",
+                            icon: suggested ? "checkmark.circle.fill" : "play.rectangle"
+                        ) {
+                            Task { await loadComments(for: episode) }
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: 900)
+            .frame(maxWidth: .infinity)
+        }
+        .frame(maxHeight: .infinity)
     }
 
     @ViewBuilder

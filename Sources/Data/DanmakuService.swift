@@ -389,6 +389,7 @@ private final class DanmakuXMLDelegate: NSObject, XMLParserDelegate {
 struct DanmakuPlacement: Identifiable {
     let comment: DanmakuComment
     let lane: Int
+    let estimatedTextWidth: Double
     var id: Int { comment.id }
 }
 
@@ -405,23 +406,23 @@ enum DanmakuLayout {
             case .fixedTop:
                 if let lane = topLanes.firstIndex(where: { $0 <= comment.time }) {
                     topLanes[lane] = comment.time + comment.displayDuration
-                    placements.append(DanmakuPlacement(comment: comment, lane: lane))
+                    placements.append(DanmakuPlacement(comment: comment, lane: lane, estimatedTextWidth: estimatedTextWidth(comment, fontSize: displayFontSize(comment: comment, width: width, scale: fontScale))))
                 }
             case .fixedBottom:
                 if let lane = bottomLanes.firstIndex(where: { $0 <= comment.time }) {
                     bottomLanes[lane] = comment.time + comment.displayDuration
-                    placements.append(DanmakuPlacement(comment: comment, lane: lane))
+                    placements.append(DanmakuPlacement(comment: comment, lane: lane, estimatedTextWidth: estimatedTextWidth(comment, fontSize: displayFontSize(comment: comment, width: width, scale: fontScale))))
                 }
             case .special:
-                placements.append(DanmakuPlacement(comment: comment, lane: 0))
+                placements.append(DanmakuPlacement(comment: comment, lane: 0, estimatedTextWidth: estimatedTextWidth(comment, fontSize: displayFontSize(comment: comment, width: width, scale: fontScale))))
             case .scrollRightToLeft, .scrollLeftToRight, .reverse, .unknown:
                 let estimatedSize = displayFontSize(comment: comment, width: width, scale: fontScale)
-                let estimatedWidth = max(estimatedSize, Double(comment.text.count) * estimatedSize * 0.72)
+                let estimatedWidth = estimatedTextWidth(comment, fontSize: estimatedSize)
                 let duration = scrollDuration(speed: speed)
                 let safeDelay = (estimatedWidth + 36) * duration / (width + estimatedWidth)
                 guard let lane = scrollLanes.firstIndex(where: { comment.time - $0.time >= $0.requiredDelay }) else { continue }
                 scrollLanes[lane] = (comment.time, safeDelay)
-                placements.append(DanmakuPlacement(comment: comment, lane: lane))
+                placements.append(DanmakuPlacement(comment: comment, lane: lane, estimatedTextWidth: estimatedWidth))
             }
         }
         return placements
@@ -429,6 +430,13 @@ enum DanmakuLayout {
 
     static func displayFontSize(comment: DanmakuComment, width: Double, scale: Double) -> Double {
         min(44, max(14, comment.fontSize * 0.78 * min(1.6, max(0.72, width / 900)) * scale))
+    }
+
+    static func estimatedTextWidth(_ comment: DanmakuComment, fontSize: Double) -> Double {
+        let units = comment.text.unicodeScalars.reduce(0.0) { result, scalar in
+            result + (scalar.value < 0x2E80 ? 0.58 : 1.0)
+        }
+        return max(fontSize, units * fontSize)
     }
 
     static func scrollDuration(speed: Double) -> Double {
