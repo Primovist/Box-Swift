@@ -138,9 +138,9 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     }
 
     func selectAudioTrack(_ index: Int) {
-        let tracks = player.audioTracks as? [VLCMediaPlayerTrack] ?? []
+        let tracks = player.audioTracks
         guard tracks.indices.contains(index) else { return }
-        tracks[index].selectedExclusively = true
+        tracks[index].isSelectedExclusively = true
         selectedAudioTrackIndex = index
     }
 
@@ -148,9 +148,9 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         if index < 0 {
             player.deselectAllTextTracks()
         } else {
-            let tracks = player.textTracks as? [VLCMediaPlayerTrack] ?? []
+            let tracks = player.textTracks
             guard tracks.indices.contains(index) else { return }
-            tracks[index].selectedExclusively = true
+            tracks[index].isSelectedExclusively = true
         }
         selectedSubtitleTrackIndex = index
     }
@@ -265,13 +265,13 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     }
 
     private func refreshTracks() {
-        let audio = player.audioTracks as? [VLCMediaPlayerTrack] ?? []
+        let audio = player.audioTracks
         audioTracks = audio.enumerated().map { index, track in
             VLCTrackOption(index: index, title: track.trackName)
         }
         selectedAudioTrackIndex = audio.firstIndex(where: \.isSelected) ?? -1
 
-        let subtitles = player.textTracks as? [VLCMediaPlayerTrack] ?? []
+        let subtitles = player.textTracks
         var choices = [VLCTrackOption(index: -1, title: "关闭字幕")]
         choices.append(contentsOf: subtitles.enumerated().map { index, track in
             VLCTrackOption(index: index, title: track.trackName)
