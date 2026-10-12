@@ -132,9 +132,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         super.init()
         player.delegate = self
         player.media = makeMedia()
-        if !request.isLive {
-            _ = player.media?.parse(withOptions: VLCMediaParsingOptions(rawValue: 1))
-        }
+        parseMediaIfNeeded()
         refreshProgress()
         startProgressUpdates()
     }
@@ -154,9 +152,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         observedNearEnd = false
         player.stop()
         player.media = makeMedia()
-        if !request.isLive {
-            _ = player.media?.parse(withOptions: VLCMediaParsingOptions(rawValue: 1))
-        }
+        parseMediaIfNeeded()
         setAspectRatio(aspectRatio, label: aspectRatioLabel)
         progress = 0
         currentMilliseconds = 0
@@ -194,9 +190,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         subtitleTracks = []
         didApplyResumePosition = false
         player.media = makeMedia()
-        if !request.isLive {
-            _ = player.media?.parse(withOptions: VLCMediaParsingOptions(rawValue: 1))
-        }
+        parseMediaIfNeeded()
         setAspectRatio(aspectRatio, label: aspectRatioLabel)
         play()
     }
@@ -342,6 +336,11 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
             }
         }
         return media
+    }
+
+    private func parseMediaIfNeeded() {
+        guard !request.isLive, let media = player.media else { return }
+        _ = VLCMediaParser.sharedParser().queueMedia(media, options: VLCMediaParsingOptions(rawValue: 1))
     }
 
     private func header(named name: String) -> String? {
