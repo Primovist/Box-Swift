@@ -16,11 +16,12 @@ struct DanmakuOverlay: View {
     var body: some View {
         GeometryReader { geometry in
             let key = layoutKey(for: geometry.size)
-            TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isEnabled || !session.isDanmakuClockAdvancing || placements.isEmpty)) { _ in
+            TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isEnabled || !session.isDanmakuClockAdvancing || placements.isEmpty)) { timeline in
+                let frameUptime = ProcessInfo.processInfo.systemUptime + timeline.date.timeIntervalSinceNow
+                let playbackTime = session.danmakuPlaybackTime(at: frameUptime)
                 Canvas { context, size in
                     guard isEnabled, !placements.isEmpty else { return }
-                    let time = session.danmakuPlaybackTime(at: ProcessInfo.processInfo.systemUptime)
-                    draw(context: &context, size: size, safeAreaInsets: geometry.safeAreaInsets, time: time)
+                    draw(context: &context, size: size, safeAreaInsets: geometry.safeAreaInsets, time: playbackTime)
                 }
                 .clipped()
             }

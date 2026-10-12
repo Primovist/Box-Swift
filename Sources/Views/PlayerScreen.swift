@@ -110,6 +110,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     private var danmakuSeekLastSampleMilliseconds: Double?
     private var danmakuSeekLastSampleUptime: TimeInterval?
     private var didApplyResumePosition = false
+    private var reportedDurationMilliseconds = 0
     private var aspectRatio: String?
     private var ignoreNextStoppedEvent = false
     private var observedNearEnd = false
@@ -150,6 +151,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     func retry() {
         ignoreNextStoppedEvent = true
         observedNearEnd = false
+        reportedDurationMilliseconds = 0
         player.stop()
         player.media = makeMedia()
         parseMediaIfNeeded()
@@ -171,6 +173,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         progressTimer = nil
         ignoreNextStoppedEvent = true
         observedNearEnd = false
+        reportedDurationMilliseconds = 0
         player.stop()
         self.request = request
         playbackGeneration += 1
@@ -298,6 +301,14 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     nonisolated func mediaPlayerStateChanged(_ newState: VLCMediaPlayerState) {
         Task { @MainActor [weak self] in
             self?.refreshState(newState)
+        }
+    }
+
+    nonisolated func mediaPlayerLengthChanged(_ length: Int64) {
+        Task { @MainActor [weak self] in
+            guard let self, !self.request.isLive, length > 0 else { return }
+            self.reportedDurationMilliseconds = Int(clamping: length)
+            self.refreshProgress()
         }
     }
 
@@ -615,6 +626,9 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
 
     private var totalDurationMilliseconds: Int {
         guard !request.isLive else { return 0 }
+        if reportedDurationMilliseconds > 0 {
+            return reportedDurationMilliseconds
+        }
         return max(0, Int(player.media?.length.intValue ?? 0))
     }
 
