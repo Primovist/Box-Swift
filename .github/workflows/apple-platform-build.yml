@@ -11,8 +11,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: apple-platform-build-${{ github.ref }}
-  cancel-in-progress: true
+  group: apple-platform-build-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -28,13 +28,11 @@ jobs:
             sdk: iphoneos
             products_directory: Release-iphoneos
             app_name: TVBox-iOS.app
-            ipa_name: TVBox-iOS-0.2.4-6-unsigned.ipa
           - scheme: TVBox-tvOS
             destination: generic/platform=tvOS
             sdk: appletvos
             products_directory: Release-appletvos
             app_name: TVBox-tvOS.app
-            ipa_name: TVBox-tvOS-0.2.4-6-unsigned.ipa
 
     steps:
       - name: Check out source
@@ -51,33 +49,160 @@ jobs:
           -scheme "${{ matrix.scheme }}"
 
       - name: Build ${{ matrix.scheme }}
-        run: >-
-          xcodebuild
-          -project TVBoxSwift.xcodeproj
-          -scheme "${{ matrix.scheme }}"
-          -configuration Release
-          -sdk "${{ matrix.sdk }}"
-          -destination "${{ matrix.destination }}"
-          -derivedDataPath "$RUNNER_TEMP/DerivedData"
-          CODE_SIGNING_ALLOWED=NO
-          build
+        run: |
+          set -euo pipefail
+          BUILD_NUMBER=$((1000 + GITHUB_RUN_NUMBER))
+          xcodebuild \
+            -project TVBoxSwift.xcodeproj \
+            -scheme "${{ matrix.scheme }}" \
+            -configuration Release \
+            -sdk "${{ matrix.sdk }}" \
+            -destination "${{ matrix.destination }}" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            "CURRENT_PROJECT_VERSION=$BUILD_NUMBER" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
 
       - name: Package unsigned IPA
+        id: package
         run: |
           set -euo pipefail
           APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/${{ matrix.products_directory }}/${{ matrix.app_name }}"
           PAYLOAD_DIRECTORY="$RUNNER_TEMP/ipa/Payload"
-          IPA_PATH="$RUNNER_TEMP/${{ matrix.ipa_name }}"
           test -d "$APP_PATH"
+          APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")
+          BUILD_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")
+          IPA_NAME="${{ matrix.scheme }}-${APP_VERSION}-${BUILD_VERSION}-unsigned.ipa"
+          IPA_PATH="$RUNNER_TEMP/$IPA_NAME"
           mkdir -p "$PAYLOAD_DIRECTORY"
           ditto "$APP_PATH" "$PAYLOAD_DIRECTORY/${{ matrix.app_name }}"
           ditto -c -k --sequesterRsrc --keepParent "$PAYLOAD_DIRECTORY" "$IPA_PATH"
+          echo "ipa_name=$IPA_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.ipa_name }}
-          path: ${{ runner.temp }}/${{ matrix.ipa_name }}
+          name: ${{ steps.package.outputs.ipa_name }}
+          path: ${{ runner.temp }}/${{ steps.package.outputs.ipa_name }}
           archive: false
+          overwrite: true
           if-no-files-found: error
           retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Download unsigned IPAs
+        uses: actions/download-artifact@v8
+        with:
+          pattern: TVBox-*-unsigned.ipa
+          path: ${{ runner.temp }}/release-assets
+          merge-multiple: true
+
+      - name: Read build version from both IPAs
+        id: release-version
+        run: |
+          python3 - "$RUNNER_TEMP/release-assets" "$GITHUB_OUTPUT" <<'PY'
+          import glob
+          import os
+          import plistlib
+          import sys
+          import zipfile
+
+          assets_dir, output_path = sys.argv[1:]
+          ipa_paths = sorted(glob.glob(os.path.join(assets_dir, "TVBox-*-unsigned.ipa")))
+          if len(ipa_paths) != 2:
+              raise SystemExit(f"Expected two platform IPAs, found {len(ipa_paths)}")
+
+          builds = {}
+          for ipa_path in ipa_paths:
+              platform = os.path.basename(ipa_path).split("-")[1]
+              with zipfile.ZipFile(ipa_path) as archive:
+                  plist_path = next((name for name in archive.namelist() if name.startswith("Payload/") and name.endswith(".app/Info.plist")), None)
+                  if plist_path is None:
+                      raise SystemExit(f"Missing app Info.plist in {ipa_path}")
+                  info = plistlib.loads(archive.read(plist_path))
+              builds[platform] = (str(info["CFBundleShortVersionString"]), str(info["CFBundleVersion"]))
+
+          if set(builds) != {"iOS", "tvOS"}:
+              raise SystemExit(f"Expected iOS and tvOS IPAs, found {sorted(builds)}")
+          if builds["iOS"] != builds["tvOS"]:
+              raise SystemExit(f"Platform versions differ: {builds}")
+
+          version, build_number = builds["iOS"]
+          with open(output_path, "a", encoding="utf-8") as output:
+              output.write(f"version={version}\n")
+              output.write(f"build_number={build_number}\n")
+              output.write(f"tag=v{version}-build.{build_number}\n")
+          PY
+
+      - name: Publish unsigned IPAs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release-version.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.release-version.outputs.version }}
+          BUILD_NUMBER: ${{ steps.release-version.outputs.build_number }}
+        run: |
+          set -euo pipefail
+          TAG="$RELEASE_TAG"
+          TITLE="TV Box $RELEASE_VERSION (Build $BUILD_NUMBER)"
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+          printf 'iOS 和 tvOS 未签名 IPA 构建产物。\n\n源码提交：`%s`\n' "$GITHUB_SHA" > "$NOTES_FILE"
+
+          set +e
+          REMOTE_TAGS=$(git ls-remote --exit-code --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}" 2>&1)
+          TAG_LOOKUP_STATUS=$?
+          set -e
+          if [[ $TAG_LOOKUP_STATUS -eq 0 ]]; then
+            git fetch origin "refs/tags/$TAG:refs/tags/$TAG"
+            TAG_COMMIT=$(git rev-parse "$TAG^{commit}")
+            if [[ "$TAG_COMMIT" != "$GITHUB_SHA" ]]; then
+              echo "Release tag $TAG already points to $TAG_COMMIT, not $GITHUB_SHA." >&2
+              exit 1
+            fi
+          elif [[ $TAG_LOOKUP_STATUS -ne 2 ]]; then
+            echo "Unable to check remote tag $TAG: $REMOTE_TAGS" >&2
+            exit "$TAG_LOOKUP_STATUS"
+          fi
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            RELEASE_TARGET=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq '.targetCommitish')
+            if [[ "$RELEASE_TARGET" != "$GITHUB_SHA" ]]; then
+              echo "Release $TAG targets $RELEASE_TARGET, not $GITHUB_SHA." >&2
+              exit 1
+            fi
+            echo "Release $TAG exists for this commit; preserving its existing assets."
+          else
+            gh release create "$TAG" \
+              --draft \
+              --title "$TITLE" \
+              --notes-file "$NOTES_FILE" \
+              --target "$GITHUB_SHA" \
+              --repo "$GITHUB_REPOSITORY"
+          fi
+
+          EXISTING_ASSETS=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+          NEW_ASSETS=()
+          while IFS= read -r -d '' IPA_PATH; do
+            IPA_NAME=$(basename "$IPA_PATH")
+            if ! grep -Fxq "$IPA_NAME" <<< "$EXISTING_ASSETS"; then
+              NEW_ASSETS+=("$IPA_PATH")
+            fi
+          done < <(find "$RUNNER_TEMP/release-assets" -maxdepth 1 -type f -name 'TVBox-*-unsigned.ipa' -print0)
+
+          if [[ ${#NEW_ASSETS[@]} -gt 0 ]]; then
+            gh release upload "$TAG" "${NEW_ASSETS[@]}" --repo "$GITHUB_REPOSITORY"
+          fi
+          gh release edit "$TAG" --draft=false --title "$TITLE" --notes-file "$NOTES_FILE" --repo "$GITHUB_REPOSITORY"

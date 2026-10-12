@@ -9,11 +9,23 @@ private enum HomeSection: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+#if os(iOS)
+private struct HomeScrollMetrics: Equatable {
+    let offsetFromTop: CGFloat
+    let maximumOffset: CGFloat
+}
+#endif
+
 struct HomeView: View {
     @EnvironmentObject private var catalog: CatalogStore
     @AppStorage("tvbox.searchAcrossSites") private var searchAcrossSites = true
     @State private var searchText = ""
     @State private var section: HomeSection = .video
+    #if os(iOS)
+    @State private var isSectionNavigationCollapsed = false
+    @State private var downwardScrollDistance: CGFloat = 0
+    @State private var upwardScrollDistance: CGFloat = 0
+    #endif
     @State private var playbackRequest: PlaybackRequest?
     @State private var epgChannel: TVBoxLiveChannel?
     @State private var showingSiteChoices = false
@@ -110,6 +122,16 @@ struct HomeView: View {
                             .padding(.bottom, 48)
                             .frame(maxWidth: .infinity)
                         }
+                        #if os(iOS)
+                        .onScrollGeometryChange(for: HomeScrollMetrics.self) { geometry in
+                            HomeScrollMetrics(
+                                offsetFromTop: max(0, geometry.contentOffset.y + geometry.contentInsets.top),
+                                maximumOffset: max(0, geometry.contentSize.height - geometry.containerSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom)
+                            )
+                        } action: { oldMetrics, newMetrics in
+                            updateSectionNavigation(oldMetrics: oldMetrics, newMetrics: newMetrics)
+                        }
+                        #endif
                     }
                 }
                 .navigationDestination(for: MediaItem.self) { item in
@@ -187,10 +209,22 @@ struct HomeView: View {
         }
         #endif
         .onChange(of: section) { newValue in
+            #if os(iOS)
+            isSectionNavigationCollapsed = false
+            downwardScrollDistance = 0
+            upwardScrollDistance = 0
+            #endif
             if newValue == .live { catalog.loadLive() }
             if newValue == .video { searchText = "" }
         }
-        .onChange(of: catalog.selectedSiteKey) { _ in searchText = "" }
+        .onChange(of: catalog.selectedSiteKey) { _ in
+            searchText = ""
+            #if os(iOS)
+            isSectionNavigationCollapsed = false
+            downwardScrollDistance = 0
+            upwardScrollDistance = 0
+            #endif
+        }
     }
 
     @ViewBuilder
@@ -382,34 +416,108 @@ struct HomeView: View {
 
     #if os(iOS)
     private var sectionNavigationBar: some View {
-        HStack(spacing: 4) {
-            ForEach(HomeSection.allCases) { value in
-                Button {
-                    section = value
-                    if value == .video { searchText = ""; catalog.selectCategory("") }
-                } label: {
-                    VStack(spacing: 5) {
-                        Image(systemName: sectionSymbol(for: value))
-                            .font(.system(size: 18, weight: section == value ? .semibold : .regular))
-                        Text(value.rawValue)
-                            .font(.system(size: 11, weight: section == value ? .semibold : .medium))
+        Group {
+            if isSectionNavigationCollapsed {
+                HStack {
+                    Button {
+                        withAnimation(.snappy(duration: 0.25)) {
+                            isSectionNavigationCollapsed = false
+                        }
+                        downwardScrollDistance = 0
+                        upwardScrollDistance = 0
+                    } label: {
+                        Image(systemName: sectionSymbol(for: section))
+                            .font(.system(size: 19, weight: .semibold))
+                            .foregroundStyle(Color.tvboxAccent)
+                            .frame(width: 48, height: 48)
+                            .contentShape(Circle())
                     }
-                    .foregroundStyle(section == value ? Color.tvboxAccent : Color.tvboxMuted)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 52)
-                    .contentShape(Capsule())
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: Circle())
+                    .accessibilityLabel("展开导航，当前：\(section.rawValue)")
+                    Spacer(minLength: 0)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(value.rawValue)
-                .accessibilityAddTraits(section == value ? .isSelected : [])
+                .padding(.horizontal, 18)
+            } else {
+                HStack(spacing: 4) {
+                    ForEach(HomeSection.allCases) { value in
+                        Button { selectSection(value) } label: {
+                            VStack(spacing: 5) {
+                                Image(systemName: sectionSymbol(for: value))
+                                    .font(.system(size: 18, weight: section == value ? .semibold : .regular))
+                                Text(value.rawValue)
+                                    .font(.system(size: 11, weight: section == value ? .semibold : .medium))
+                            }
+                            .foregroundStyle(section == value ? Color.tvboxAccent : Color.tvboxMuted)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 52)
+                            .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(value.rawValue)
+                        .accessibilityAddTraits(section == value ? .isSelected : [])
+                    }
+                }
+                .padding(7)
+                .background(.black.opacity(0.14), in: Capsule())
+                .glassEffect(.regular.interactive(), in: Capsule())
+                .padding(.horizontal, 18)
             }
         }
-        .padding(7)
-        .background(.black.opacity(0.14), in: Capsule())
-        .glassEffect(.regular.interactive(), in: Capsule())
-        .padding(.horizontal, 18)
-        .padding(.top, 7)
-        .padding(.bottom, 5)
+        .frame(maxWidth: .infinity)
+        .frame(height: 78, alignment: .bottom)
+        .padding(.bottom, 4)
+        .animation(.snappy(duration: 0.25), value: isSectionNavigationCollapsed)
+    }
+
+    private func selectSection(_ value: HomeSection) {
+        section = value
+        isSectionNavigationCollapsed = false
+        downwardScrollDistance = 0
+        upwardScrollDistance = 0
+        if value == .video { searchText = ""; catalog.selectCategory("") }
+    }
+
+    private func updateSectionNavigation(oldMetrics: HomeScrollMetrics, newMetrics: HomeScrollMetrics) {
+        guard newMetrics.maximumOffset > 1 else {
+            isSectionNavigationCollapsed = false
+            downwardScrollDistance = 0
+            upwardScrollDistance = 0
+            return
+        }
+        if newMetrics.offsetFromTop <= 1 {
+            isSectionNavigationCollapsed = false
+            downwardScrollDistance = 0
+            upwardScrollDistance = 0
+            return
+        }
+        guard abs(newMetrics.maximumOffset - oldMetrics.maximumOffset) <= 2,
+              newMetrics.offsetFromTop <= newMetrics.maximumOffset + 2,
+              oldMetrics.offsetFromTop <= oldMetrics.maximumOffset + 2 else {
+            downwardScrollDistance = 0
+            upwardScrollDistance = 0
+            return
+        }
+        let delta = newMetrics.offsetFromTop - oldMetrics.offsetFromTop
+
+        if delta > 0, !isSectionNavigationCollapsed {
+            downwardScrollDistance += delta
+            upwardScrollDistance = 0
+            if downwardScrollDistance >= 24 {
+                withAnimation(.snappy(duration: 0.25)) { isSectionNavigationCollapsed = true }
+                downwardScrollDistance = 0
+            }
+        } else if delta < 0, isSectionNavigationCollapsed {
+            upwardScrollDistance += -delta
+            downwardScrollDistance = 0
+            if upwardScrollDistance >= 12 {
+                withAnimation(.snappy(duration: 0.25)) { isSectionNavigationCollapsed = false }
+                upwardScrollDistance = 0
+            }
+        } else if delta != 0 {
+            downwardScrollDistance = 0
+            upwardScrollDistance = 0
+        }
     }
 
     private func sectionSymbol(for value: HomeSection) -> String {
