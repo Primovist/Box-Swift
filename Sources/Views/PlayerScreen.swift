@@ -72,11 +72,11 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     }
 
     var volume: Double {
-        min(200, max(0, Double(player.audio.volume)))
+        min(200, max(0, Double(player.audio?.volume ?? 100)))
     }
 
     func setVolume(_ value: Double) {
-        player.audio.volume = Int32(min(200, max(0, value)))
+        player.audio?.volume = Int32(min(200, max(0, value)))
     }
 
     func danmakuPlaybackTime(at uptime: TimeInterval) -> Double {
