@@ -50,7 +50,7 @@
 2. 选择 `TVBox-iOS` 或 `TVBox-tvOS` scheme，在模拟器或设备上运行。
 3. 等待 Swift Package Manager 获取 VideoLAN VLCKit `4.0.0-a25`。设备构建需要配置签名团队。
 
-项目最低支持 iOS 26.0 和 tvOS 26.0。推送到 `main`、向 `main` 提交 Pull Request 或手动运行 GitHub Actions 时，工作流会分别构建 iOS 与 tvOS 模拟器版本，并将 `.app` 作为构建产物保留 7 天。该工作流不签名或发布设备安装包；真实流媒体和弹幕播放仍需后续在设备上验证。失败任务可从对应的 Actions 运行页面重新执行。
+项目最低支持 iOS 26.0 和 tvOS 26.0。推送到 `main`、向 `main` 提交 Pull Request 或手动运行 GitHub Actions 时，工作流会分别构建 iOS 与 tvOS 设备版本，将未签名 `.app` 打包为 `.ipa` 并保留 7 天。安装到设备或发布前仍需进行签名；真实流媒体和弹幕播放也需后续在设备上验证。失败任务可从对应的 Actions 运行页面重新执行。
 
 ## 暂未移植的功能
 

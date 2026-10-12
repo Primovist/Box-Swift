@@ -24,13 +24,17 @@ jobs:
       matrix:
         include:
           - scheme: TVBox-iOS
-            destination: generic/platform=iOS Simulator
-            products_directory: Release-iphonesimulator
+            destination: generic/platform=iOS
+            sdk: iphoneos
+            products_directory: Release-iphoneos
             app_name: TVBox-iOS.app
+            ipa_name: TVBox-iOS-0.2.1-3-unsigned.ipa
           - scheme: TVBox-tvOS
-            destination: generic/platform=tvOS Simulator
-            products_directory: Release-appletvsimulator
+            destination: generic/platform=tvOS
+            sdk: appletvos
+            products_directory: Release-appletvos
             app_name: TVBox-tvOS.app
+            ipa_name: TVBox-tvOS-0.2.1-3-unsigned.ipa
 
     steps:
       - name: Check out source
@@ -52,15 +56,28 @@ jobs:
           -project TVBoxSwift.xcodeproj
           -scheme "${{ matrix.scheme }}"
           -configuration Release
+          -sdk "${{ matrix.sdk }}"
           -destination "${{ matrix.destination }}"
           -derivedDataPath "$RUNNER_TEMP/DerivedData"
           CODE_SIGNING_ALLOWED=NO
           build
 
-      - name: Upload app bundle
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+          APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/${{ matrix.products_directory }}/${{ matrix.app_name }}"
+          PAYLOAD_DIRECTORY="$RUNNER_TEMP/ipa/Payload"
+          IPA_PATH="$RUNNER_TEMP/${{ matrix.ipa_name }}"
+          test -d "$APP_PATH"
+          mkdir -p "$PAYLOAD_DIRECTORY"
+          ditto "$APP_PATH" "$PAYLOAD_DIRECTORY/${{ matrix.app_name }}"
+          ditto -c -k --sequesterRsrc --keepParent "$PAYLOAD_DIRECTORY" "$IPA_PATH"
+
+      - name: Upload unsigned IPA
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.scheme }}-${{ github.sha }}
-          path: ${{ runner.temp }}/DerivedData/Build/Products/${{ matrix.products_directory }}/${{ matrix.app_name }}
+          name: ${{ matrix.ipa_name }}
+          path: ${{ runner.temp }}/${{ matrix.ipa_name }}
+          archive: false
           if-no-files-found: error
           retention-days: 7
