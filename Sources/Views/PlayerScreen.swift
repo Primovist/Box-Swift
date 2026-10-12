@@ -230,7 +230,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
             pendingPositionSeekOriginFraction = Double(player.position)
             pendingPositionSeekOriginMilliseconds = Double(max(0, player.time.intValue))
             pendingDanmakuSeekStartedAt = ProcessInfo.processInfo.systemUptime
-            player.position = Float(boundedFraction)
+            player.position = boundedFraction
             refreshProgress()
             return
         }
