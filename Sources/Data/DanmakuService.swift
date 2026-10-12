@@ -80,29 +80,103 @@ enum DanmakuServiceError: LocalizedError {
 }
 
 struct DanmakuService {
-    static func episodeNumber(in title: String) -> Int? {
+    private struct EpisodeReference: Equatable {
+        let season: Int?
+        let number: Int
+    }
+
+    private static func episodeReference(in title: String) -> EpisodeReference? {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.count <= 3, let number = Int(trimmed), number > 0 { return number }
+        if trimmed.count <= 3, let number = Int(trimmed), number > 0 {
+            return EpisodeReference(season: nil, number: number)
+        }
+
+        let seasonPatterns = [
+            #"(?i)\bS0*(\d{1,2})\s*E(?:P)?0*(\d{1,3})\b"#,
+            #"第\s*([0-9]{1,2}|[零〇一二两三四五六七八九十百]+)\s*[季部][^\n]{0,12}?第\s*([0-9]{1,3}|[零〇一二两三四五六七八九十百]+)\s*[集话話期回]"#
+        ]
+        let titleRange = NSRange(title.startIndex..<title.endIndex, in: title)
+        for pattern in seasonPatterns {
+            guard let expression = try? NSRegularExpression(pattern: pattern),
+                  let match = expression.firstMatch(in: title, range: titleRange),
+                  let seasonRange = Range(match.range(at: 1), in: title),
+                  let numberRange = Range(match.range(at: 2), in: title),
+                  let season = Self.episodeComponent(String(title[seasonRange])),
+                  let number = Self.episodeComponent(String(title[numberRange])),
+                  season > 0, number > 0 else { continue }
+            return EpisodeReference(season: season, number: number)
+        }
 
         let patterns = [
-            #"(?i)\bS\d{1,2}\s*E(?:P)?0*(\d{1,3})\b"#,
             #"(?i)\b(?:EP?|Episode)\s*0*(\d{1,3})\b"#,
             #"第\s*([0-9]{1,3})\s*[集话話期回]"#
         ]
-        let titleRange = NSRange(title.startIndex..<title.endIndex, in: title)
         for pattern in patterns {
             guard let expression = try? NSRegularExpression(pattern: pattern),
                   let match = expression.firstMatch(in: title, range: titleRange),
                   let range = Range(match.range(at: 1), in: title),
                   let number = Int(title[range]), number > 0 else { continue }
-            return number
+            return EpisodeReference(season: nil, number: number)
         }
 
         let chinesePattern = #"第\s*([零〇一二两三四五六七八九十百]+)\s*[集话話期回]"#
         guard let expression = try? NSRegularExpression(pattern: chinesePattern),
               let match = expression.firstMatch(in: title, range: titleRange),
               let range = Range(match.range(at: 1), in: title) else { return nil }
-        return Self.chineseEpisodeNumber(String(title[range]))
+        guard let number = Self.chineseEpisodeNumber(String(title[range])) else { return nil }
+        return EpisodeReference(season: nil, number: number)
+    }
+
+    private static func seasonNumber(in title: String) -> Int? {
+        let patterns = [
+            #"(?i)\bS0*(\d{1,2})(?:E0*\d{1,3})?\b"#,
+            #"(?i)\bSeason\s*0*(\d{1,2})\b"#,
+            #"第\s*([0-9]{1,2}|[零〇一二两三四五六七八九十百]+)\s*[季部]"#
+        ]
+        let range = NSRange(title.startIndex..<title.endIndex, in: title)
+        for pattern in patterns {
+            guard let expression = try? NSRegularExpression(pattern: pattern),
+                  let match = expression.firstMatch(in: title, range: range),
+                  let valueRange = Range(match.range(at: 1), in: title),
+                  let season = Self.episodeComponent(String(title[valueRange])), season > 0 else { continue }
+            return season
+        }
+        return nil
+    }
+
+    private static func yearNumber(in title: String) -> String? {
+        guard let range = title.range(of: #"(?:19|20)\d{2}"#, options: .regularExpression) else { return nil }
+        return String(title[range])
+    }
+
+    private static func titleType(in title: String) -> String {
+        let patterns = [#"〖([^〗]+)〗"#, #"【([^】]+)】"#, #"\[([^\]]+)\]"#]
+        let range = NSRange(title.startIndex..<title.endIndex, in: title)
+        let knownKinds = ["电影", "剧场版", "电视剧", "连续剧", "剧集", "番剧", "动漫", "动画", "movie", "film", "series", "tv"]
+        for pattern in patterns {
+            guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }
+            for match in expression.matches(in: title, range: range) {
+                guard let valueRange = Range(match.range(at: 1), in: title) else { continue }
+                let value = String(title[valueRange])
+                if knownKinds.contains(where: { value.localizedCaseInsensitiveContains($0) }) { return value }
+            }
+        }
+        return ""
+    }
+
+    private static func normalizedMatchTitle(_ title: String) -> String {
+        let cleaned = title
+            .replacingOccurrences(of: #"(?i)(?<=[】〗\]])from\s+.*$"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"(?i)\s+from\s+.*$"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"[（(](?:19|20)\d{2}[）)]"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"[【〖][^】〗]*(?:电影|剧场版|电视剧|连续剧|剧集|番剧|动漫|动画|TV|Movie)[^】〗]*[】〗]|\[[^\]]*(?:电影|剧场版|电视剧|连续剧|剧集|番剧|动漫|动画|TV|Movie)[^\]]*\]"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"(?i)\bSeason\s*0*\d{1,2}\b|\bS0*\d{1,2}(?:E0*\d{1,3})?\b"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"第\s*(?:[0-9]{1,2}|[零〇一二两三四五六七八九十百]+)\s*[季部]"#, with: "", options: .regularExpression)
+        return Self.normalized(cleaned)
+    }
+
+    static func episodeNumber(in title: String) -> Int? {
+        episodeReference(in: title)?.number
     }
 
     func searchAnime(keyword: String, apiAddress: String) async throws -> [DanmakuAnime] {
@@ -167,6 +241,217 @@ struct DanmakuService {
         return readEpisodes(compatibleUnidentifiedMatches[0])
     }
 
+    func automaticMatch(
+        title: String,
+        category: String,
+        year: String,
+        episodeTitle: String,
+        isSeries: Bool,
+        apiAddress: String
+    ) async throws -> (comments: [DanmakuComment], matchTitle: String) {
+        let keyword = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !keyword.isEmpty else { throw DanmakuServiceError.api("没有可用于匹配弹幕的片名，请手动搜索。") }
+
+        // danmu-api 的 match 接口可以解析发行文件名、年份、季数和集数，
+        // 优先使用服务端的规则/映射记忆；对返回结果做本地校验后才采纳。
+        do {
+            if let matched = try await intelligentMatch(
+                title: keyword,
+                category: category,
+                year: year,
+                episodeTitle: episodeTitle,
+                isSeries: isSeries,
+                apiAddress: apiAddress
+            ) {
+                return matched
+            }
+        } catch {
+            if Task.isCancelled { throw CancellationError() }
+            // 老版本 DandanPlay 兼容服务可能没有 match 接口，继续使用搜索接口兜底。
+        }
+
+        let searchResults = try await searchAnime(keyword: keyword, apiAddress: apiAddress)
+        let normalizedTitle = Self.normalizedMatchTitle(keyword)
+        let requestedYear = year.isEmpty ? (Self.yearNumber(in: keyword) ?? "") : year
+        let requestedSeason = Self.episodeReference(in: episodeTitle)?.season ?? Self.seasonNumber(in: keyword)
+        let categoryIsMovie = ["电影", "剧场版", "movie", "film"].contains { category.lowercased().contains($0) }
+        let mediaIsSeries = !categoryIsMovie && (isSeries || ["电视剧", "连续剧", "剧集", "番剧", "动漫", "动画", "series", "tv"]
+            .contains { category.lowercased().contains($0) })
+        let exactTitleMatches = searchResults.filter {
+            Self.normalizedMatchTitle($0.title) == normalizedTitle || Self.normalizedMatchTitle($0.searchTitle) == normalizedTitle
+        }
+        let typedMatches = exactTitleMatches.filter { anime in
+            let candidateType = "\(anime.typeDescription) \(Self.titleType(in: anime.title))".lowercased()
+            let candidateIsMovie = ["电影", "剧场版", "movie", "film"].contains { candidateType.contains($0) }
+            let candidateIsSeries = !candidateIsMovie && ["电视剧", "连续剧", "剧集", "番剧", "动漫", "动画", "series", "tv"]
+                .contains { candidateType.contains($0) }
+            let mediaIsMovie = categoryIsMovie
+            if mediaIsMovie && candidateIsSeries { return false }
+            if mediaIsSeries && candidateIsMovie { return false }
+            return true
+        }
+        let yearMatches = typedMatches.filter { anime in
+            let titleYear = Self.yearNumber(in: anime.title) ?? Self.yearNumber(in: anime.searchTitle) ?? ""
+            let candidateYear = anime.startYear.isEmpty ? titleYear : anime.startYear
+            return requestedYear.isEmpty || candidateYear.isEmpty || candidateYear == requestedYear
+        }.filter { anime in
+            guard mediaIsSeries else { return true }
+            let candidateSeason = Self.seasonNumber(in: anime.title) ?? Self.seasonNumber(in: anime.searchTitle)
+            if let requestedSeason { return candidateSeason == nil || candidateSeason == requestedSeason }
+            return candidateSeason == nil
+        }
+        guard yearMatches.count == 1, let anime = yearMatches.first else {
+            throw DanmakuServiceError.api("未能唯一匹配《\(keyword)》的年份和类型，请手动搜索选择作品。")
+        }
+
+        let availableEpisodes = try await episodes(for: anime, apiAddress: apiAddress)
+        let selectedEpisode: DanmakuEpisode?
+        if mediaIsSeries {
+            guard let currentEpisode = Self.episodeReference(in: episodeTitle) else {
+                throw DanmakuServiceError.api("无法识别当前集数，请手动搜索并选择对应集数。")
+            }
+            let candidates = availableEpisodes.compactMap { episode -> (DanmakuEpisode, EpisodeReference)? in
+                guard let reference = Self.episodeReference(in: episode.title) else { return nil }
+                return (episode, reference)
+            }
+            let hasSeasonLabels = candidates.contains { $0.1.season != nil }
+            let matches = candidates.filter { pair in
+                let candidate = pair.1
+                guard candidate.number == currentEpisode.number else { return false }
+                guard let requestedSeason = currentEpisode.season ?? Self.seasonNumber(in: keyword) else {
+                    return candidate.season == nil && !hasSeasonLabels
+                }
+                return candidate.season == requestedSeason || (candidate.season == nil && !hasSeasonLabels)
+            }
+            guard matches.count == 1, let selected = matches.first?.0 else {
+                let seasonText = currentEpisode.season.map { "第 \($0) 季" } ?? ""
+                throw DanmakuServiceError.api("《\(anime.title)》没有唯一匹配\(seasonText)第 \(currentEpisode.number) 集的弹幕，请手动搜索。")
+            }
+            selectedEpisode = selected
+        } else {
+            let featureMatches = availableEpisodes.filter {
+                let name = $0.title.lowercased()
+                return ["正片", "电影", "全片", "movie", "feature"].contains { name.contains($0) }
+            }
+            if availableEpisodes.count == 1 {
+                selectedEpisode = availableEpisodes.first
+            } else if featureMatches.count == 1 {
+                selectedEpisode = featureMatches.first
+            } else {
+                throw DanmakuServiceError.api("无法唯一确定《\(anime.title)》的电影正片弹幕，请手动搜索选择。")
+            }
+        }
+
+        guard let selectedEpisode else { throw DanmakuServiceError.api("匹配作品没有可用的弹幕集数，请手动搜索。") }
+        let loadedComments = try await comments(for: selectedEpisode, apiAddress: apiAddress)
+        return (loadedComments, "\(anime.title) · \(selectedEpisode.title)")
+    }
+
+    private func intelligentMatch(
+        title: String,
+        category: String,
+        year: String,
+        episodeTitle: String,
+        isSeries: Bool,
+        apiAddress: String
+    ) async throws -> (comments: [DanmakuComment], matchTitle: String)? {
+        let categoryIsMovie = ["电影", "剧场版", "movie", "film"].contains { category.lowercased().contains($0) }
+        let expectsEpisode = !categoryIsMovie && (isSeries || ["电视剧", "连续剧", "剧集", "番剧", "动漫", "动画", "series", "tv"]
+            .contains { category.lowercased().contains($0) })
+        let requestedEpisode = Self.episodeReference(in: episodeTitle)
+        let requestedSeason = requestedEpisode?.season ?? Self.seasonNumber(in: title)
+        if expectsEpisode, requestedEpisode == nil { return nil }
+
+        var fileName = title
+        if !year.isEmpty { fileName += " (\(year))" }
+        if expectsEpisode, let requestedEpisode {
+            if let season = requestedSeason {
+                fileName += String(format: " S%02dE%02d", season, requestedEpisode.number)
+            } else {
+                fileName += String(format: " 第%02d集", requestedEpisode.number)
+            }
+        }
+
+        let data = try await request(
+            path: ["match"],
+            method: "POST",
+            jsonBody: ["fileName": fileName],
+            apiAddress: apiAddress
+        )
+        let root = try jsonObject(data)
+        try checkAPIError(root)
+        guard root["isMatched"] as? Bool == true,
+              let matches = root["matches"] as? [[String: Any]], matches.count == 1,
+              let result = matches.first else { return nil }
+
+        let animeTitle = value(result, keys: ["animeTitle", "title", "name"])
+        let episodeID = value(result, keys: ["episodeId", "commentId"])
+        let matchedEpisodeTitle = value(result, keys: ["episodeTitle", "episodeName"])
+        guard !animeTitle.isEmpty, !episodeID.isEmpty, !matchedEpisodeTitle.isEmpty,
+              intelligentMatchIsCompatible(
+                requestedTitle: title,
+                requestedCategory: category,
+                requestedYear: year,
+                requestedEpisode: requestedEpisode,
+                requestedSeason: requestedSeason,
+                isSeries: expectsEpisode,
+                result: result,
+                animeTitle: animeTitle,
+                episodeTitle: matchedEpisodeTitle
+              ) else { return nil }
+
+        let episode = DanmakuEpisode(id: episodeID, title: matchedEpisodeTitle)
+        let loadedComments = try await comments(for: episode, apiAddress: apiAddress)
+        return (loadedComments, "\(animeTitle) · \(matchedEpisodeTitle)")
+    }
+
+    private func intelligentMatchIsCompatible(
+        requestedTitle: String,
+        requestedCategory: String,
+        requestedYear: String,
+        requestedEpisode: EpisodeReference?,
+        requestedSeason: Int?,
+        isSeries: Bool,
+        result: [String: Any],
+        animeTitle: String,
+        episodeTitle: String
+    ) -> Bool {
+        let normalizedRequest = Self.normalizedMatchTitle(requestedTitle)
+        let normalizedResult = Self.normalizedMatchTitle(animeTitle)
+        // 仅剥离明确的年份、平台、类型和季号标记后做完整标题比较，
+        // 避免把续作或标题前缀相同的另一部作品当作别名。
+        guard !normalizedRequest.isEmpty, normalizedRequest == normalizedResult else {
+            return false
+        }
+
+        let requestedIsMovie = ["电影", "剧场版", "movie", "film"].contains { requestedCategory.lowercased().contains($0) }
+        let requestedIsSeries = !requestedIsMovie && (isSeries || ["电视剧", "连续剧", "剧集", "番剧", "动漫", "动画", "series", "tv"]
+            .contains { requestedCategory.lowercased().contains($0) })
+        let resultType = "\(value(result, keys: ["typeDescription", "animeTypeDescription", "typeName"])) \(value(result, keys: ["type"])) \(Self.titleType(in: animeTitle))".lowercased()
+        let resultIsMovie = ["电影", "剧场版", "movie", "film"].contains { resultType.contains($0) }
+        let resultIsSeries = !resultIsMovie && ["电视剧", "连续剧", "剧集", "番剧", "动漫", "动画", "series", "tv"]
+            .contains { resultType.contains($0) }
+        if requestedIsMovie && resultIsSeries { return false }
+        if requestedIsSeries && resultIsMovie { return false }
+
+        let returnedDate = value(result, keys: ["startDate", "airDate", "year"])
+        let titleYear = Self.yearNumber(in: animeTitle) ?? ""
+        let requestedTitleYear = Self.yearNumber(in: requestedTitle) ?? ""
+        let returnedYear = returnedDate.count >= 4 ? String(returnedDate.prefix(4)) : titleYear
+        let effectiveRequestedYear = requestedYear.isEmpty ? requestedTitleYear : requestedYear
+        if !effectiveRequestedYear.isEmpty, !returnedYear.isEmpty, effectiveRequestedYear != returnedYear { return false }
+
+        if isSeries {
+            guard let requestedEpisode,
+                  let matchedEpisode = Self.episodeReference(in: episodeTitle),
+                  requestedEpisode.number == matchedEpisode.number else { return false }
+            let matchedSeason = matchedEpisode.season ?? Self.seasonNumber(in: animeTitle)
+            if let requestedSeason, let matchedSeason, requestedSeason != matchedSeason { return false }
+            if requestedSeason == nil, matchedSeason != nil { return false }
+        }
+        return true
+    }
+
     func comments(for episode: DanmakuEpisode, apiAddress: String) async throws -> [DanmakuComment] {
         let data = try await request(
             path: ["comment", episode.id],
@@ -202,7 +487,13 @@ struct DanmakuService {
         return delegate.comments
     }
 
-    private func request(path: [String], query: [URLQueryItem] = [], apiAddress: String) async throws -> Data {
+    private func request(
+        path: [String],
+        query: [URLQueryItem] = [],
+        method: String = "GET",
+        jsonBody: [String: Any]? = nil,
+        apiAddress: String
+    ) async throws -> Data {
         let trimmed = apiAddress.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard !trimmed.isEmpty else { throw DanmakuServiceError.missingAPI }
         guard var components = URLComponents(string: trimmed),
@@ -219,7 +510,11 @@ struct DanmakuService {
         components.queryItems = (components.queryItems ?? []) + query
         guard let url = components.url else { throw DanmakuServiceError.invalidURL }
         var request = URLRequest(url: url, timeoutInterval: 20)
-        request.httpMethod = "GET"
+        request.httpMethod = method
+        if let jsonBody {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: jsonBody)
+        }
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else { throw DanmakuServiceError.invalidURL }
         guard (200..<300).contains(httpResponse.statusCode) else { throw DanmakuServiceError.http(httpResponse.statusCode) }
@@ -267,6 +562,15 @@ struct DanmakuService {
             startYear: year,
             episodeCount: Int(rawEpisodeCount)
         )
+    }
+
+    private static func normalized(_ value: String) -> String {
+        String(value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .filter { $0.isLetter || $0.isNumber })
+    }
+
+    private static func episodeComponent(_ value: String) -> Int? {
+        Int(value) ?? chineseEpisodeNumber(value)
     }
 
     private static func chineseEpisodeNumber(_ value: String) -> Int? {

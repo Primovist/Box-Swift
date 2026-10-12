@@ -132,6 +132,11 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         super.init()
         player.delegate = self
         player.media = makeMedia()
+        if !request.isLive {
+            _ = player.media?.parse(withOptions: VLCMediaParsingOptions(rawValue: 1))
+        }
+        refreshProgress()
+        startProgressUpdates()
     }
 
     func play() {
@@ -149,10 +154,16 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         observedNearEnd = false
         player.stop()
         player.media = makeMedia()
+        if !request.isLive {
+            _ = player.media?.parse(withOptions: VLCMediaParsingOptions(rawValue: 1))
+        }
         setAspectRatio(aspectRatio, label: aspectRatioLabel)
         progress = 0
         currentMilliseconds = 0
         elapsedText = "00:00"
+        durationText = request.isLive ? "LIVE" : "--:--"
+        canSeek = false
+        canSeekByTime = false
         didReachEnd = false
         didApplyResumePosition = false
         resetDanmakuClock(to: 0, awaitingPlayerSample: true)
@@ -173,7 +184,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         progress = 0
         currentMilliseconds = 0
         elapsedText = "00:00"
-        durationText = "--:--"
+        durationText = request.isLive ? "LIVE" : "--:--"
         canSeek = false
         canSeekByTime = false
         didReachEnd = false
@@ -183,6 +194,9 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         subtitleTracks = []
         didApplyResumePosition = false
         player.media = makeMedia()
+        if !request.isLive {
+            _ = player.media?.parse(withOptions: VLCMediaParsingOptions(rawValue: 1))
+        }
         setAspectRatio(aspectRatio, label: aspectRatioLabel)
         play()
     }
@@ -210,7 +224,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
 
     func seek(by seconds: Int) {
         guard canSeekByTime else { return }
-        let duration = max(0, Int(player.media?.length.intValue ?? 0))
+        let duration = totalDurationMilliseconds
         let origin = Int(player.time.intValue)
         let target = min(duration, max(0, origin + seconds * 1_000))
         player.time = VLCTime(int: Int32(clamping: target))
@@ -220,7 +234,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
 
     func seek(to fraction: Double) {
         guard canSeek else { return }
-        let duration = max(0, Int(player.media?.length.intValue ?? 0))
+        let duration = totalDurationMilliseconds
         let boundedFraction = min(1, max(0, fraction))
         guard duration > 0 || player.isSeekable else { return }
         guard duration > 0 else {
@@ -399,7 +413,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
                 ? request.resumeMilliseconds
                 : request.skipOpeningMilliseconds
             if target > 0 {
-                let duration = max(0, Int(player.media?.length.intValue ?? 0))
+                let duration = totalDurationMilliseconds
                 let position = duration > 0 ? min(target, max(0, duration - 1_000)) : target
                 let origin = Int(player.time.intValue)
                 player.time = VLCTime(int: Int32(clamping: position))
@@ -408,13 +422,13 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         }
         let current = max(0, player.time.intValue)
         updateDanmakuClock(with: current)
-        let total = max(0, player.media?.length.intValue ?? 0)
+        let total = totalDurationMilliseconds
         if isPlaying {
             observedNearEnd = !request.isLive && total > 0 && Int(current) >= Int(total) - 1_500
         }
         currentMilliseconds = Int(current)
         elapsedText = Self.clockString(milliseconds: current)
-        durationText = total > 0 ? Self.clockString(milliseconds: total) : (request.isLive ? "LIVE" : "--:--")
+        durationText = total > 0 ? Self.clockString(milliseconds: Int32(clamping: total)) : (request.isLive ? "LIVE" : "--:--")
         progress = total > 0
             ? min(1, Double(current) / Double(total))
             : (player.isSeekable && !request.isLive ? min(1, max(0, Double(player.position))) : 0)
@@ -595,9 +609,14 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     }
 
     private var isAtEndOrObservedNearEnd: Bool {
-        let duration = max(0, Int(player.media?.length.intValue ?? 0))
+        let duration = totalDurationMilliseconds
         let current = max(0, Int(player.time.intValue))
         return duration > 0 && (observedNearEnd || current >= duration - 1_000)
+    }
+
+    private var totalDurationMilliseconds: Int {
+        guard !request.isLive else { return 0 }
+        return max(0, Int(player.media?.length.intValue ?? 0))
     }
 
     private static func clockString(milliseconds: Int32) -> String {
@@ -632,8 +651,10 @@ struct PlayerScreen: View {
     @State private var danmakuTask: Task<Void, Never>?
     @State private var showingDanmakuSearch = false
     @State private var showingSubtitleTracks = false
+    @State private var danmakuAPIWhenSettingsOpened = ""
     @State private var danmakuSearchPlaybackGeneration: Int?
     @State private var showingDanmakuSettings = false
+    @State private var skipNextDanmakuEnableReload = false
     @State private var areControlsVisible = true
     @State private var controlsHideTask: Task<Void, Never>?
     @State private var interactionHUDMessage: String?
@@ -644,6 +665,7 @@ struct PlayerScreen: View {
     @State private var touchStartBrightness = 0.0
     @State private var touchStartVolume = 0.0
     @AppStorage("tvbox.danmakuEnabled") private var danmakuEnabled = true
+    @AppStorage("tvbox.danmakuAPIURL") private var danmakuAPIAddress = ""
     @AppStorage("tvbox.autoNext") private var autoNextEpisode = true
     @AppStorage("tvbox.aspectRatio") private var savedAspectRatio = ""
     private let historySaveTimer = Timer.publish(every: 10, on: .main, in: .common).autoconnect()
@@ -727,12 +749,18 @@ struct PlayerScreen: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                     #if os(iOS)
-                    if isPortraitLayout && areControlsVisible {
-                        controlPanel(compact: true)
-                            .padding(.horizontal, playerPadding(compact: true))
-                            .padding(.top, 10)
-                            .padding(.bottom, playerPadding(compact: true))
-                            .transition(.opacity)
+                    if isPortraitLayout {
+                        VStack(spacing: 0) {
+                            Spacer(minLength: 0)
+                            controlPanel(compact: true)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(.horizontal, playerPadding(compact: true))
+                        .padding(.top, 10)
+                        .padding(.bottom, playerPadding(compact: true))
+                            .opacity(areControlsVisible ? 1 : 0)
+                            .allowsHitTesting(areControlsVisible)
+                            .accessibilityHidden(!areControlsVisible)
                     }
                     #endif
                 }
@@ -807,6 +835,17 @@ struct PlayerScreen: View {
             moveToEpisode(1)
         }
         .onChange(of: session.playbackGeneration) { _, _ in loadEpisodeDanmaku() }
+        .onChange(of: danmakuEnabled) { _, enabled in
+            if enabled {
+                if skipNextDanmakuEnableReload {
+                    skipNextDanmakuEnableReload = false
+                } else {
+                    loadEpisodeDanmaku()
+                }
+            } else {
+                skipNextDanmakuEnableReload = false
+            }
+        }
         .onChange(of: session.isPlaying) { _, playing in
             if playing {
                 revealControls()
@@ -827,8 +866,15 @@ struct PlayerScreen: View {
             else if session.isPlaying { revealControls() }
         }
         .onChange(of: showingDanmakuSettings) { _, showing in
-            if showing { controlsHideTask?.cancel() }
-            else if session.isPlaying { revealControls() }
+            if showing {
+                danmakuAPIWhenSettingsOpened = danmakuAPIAddress
+                controlsHideTask?.cancel()
+            } else {
+                if session.isPlaying { revealControls() }
+                if danmakuEnabled, danmakuAPIWhenSettingsOpened != danmakuAPIAddress {
+                    loadEpisodeDanmaku()
+                }
+            }
         }
         .onChange(of: showingPlayerMenu) { _, showing in
             if showing { controlsHideTask?.cancel() }
@@ -857,6 +903,7 @@ struct PlayerScreen: View {
                 danmakuLoadError = nil
                 danmakuComments = comments
                 danmakuMatchTitle = matchTitle
+                if !danmakuEnabled { skipNextDanmakuEnableReload = true }
                 danmakuEnabled = true
                 #if os(iOS)
                 showInteractionHUD("弹幕已匹配：\(matchTitle)", symbol: "checkmark.circle.fill", duration: 2)
@@ -1002,6 +1049,14 @@ struct PlayerScreen: View {
         isScrubbing = false
         touchGesture = nil
         revealControls()
+    }
+
+    private func toggleOrientation() {
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive }) else { return }
+        let requested: UIInterfaceOrientationMask = scene.interfaceOrientation.isLandscape ? .portrait : .landscape
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: requested)) { _ in }
     }
 
     #endif
@@ -1270,6 +1325,14 @@ struct PlayerScreen: View {
             }
             .accessibilityLabel("播放速度")
             #endif
+            #if os(iOS)
+            Button(action: toggleOrientation) {
+                Label("横竖屏", systemImage: "rotate.right")
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .buttonStyle(PlayerControlButtonStyle())
+            .accessibilityLabel("切换横竖屏")
+            #endif
             Spacer(minLength: 0)
         }
     }
@@ -1338,19 +1401,44 @@ struct PlayerScreen: View {
         danmakuComments = []
         danmakuLoadError = nil
         danmakuMatchTitle = nil
-        guard let source = session.request.danmakuSource,
-              !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard danmakuEnabled, !session.request.isLive else { return }
         let generation = danmakuGeneration
         let headers = session.request.headers
+        let source = session.request.danmakuSource?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let item = session.request.item
+        let mediaTitle = item?.title ?? session.title
+        let category = item?.category ?? ""
+        let year = item?.year ?? ""
+        let episodeTitle = currentDanmakuEpisodeTitle
+        let isSeries = session.request.queue.count > 1
+        let apiAddress = danmakuAPIAddress
         danmakuTask = Task { @MainActor in
             do {
-                let comments = try await DanmakuService().comments(from: source, headers: headers)
+                let service = DanmakuService()
+                let comments: [DanmakuComment]
+                let matchTitle: String
+                if !source.isEmpty {
+                    comments = try await service.comments(from: source, headers: headers)
+                    matchTitle = "\(mediaTitle) · \(episodeTitle)"
+                } else {
+                    let match = try await service.automaticMatch(
+                        title: mediaTitle,
+                        category: category,
+                        year: year,
+                        episodeTitle: episodeTitle,
+                        isSeries: isSeries,
+                        apiAddress: apiAddress
+                    )
+                    comments = match.comments
+                    matchTitle = match.matchTitle
+                }
                 guard !Task.isCancelled, generation == danmakuGeneration else { return }
                 danmakuComments = comments
+                danmakuMatchTitle = matchTitle
                 danmakuGeneration += 1
             } catch {
                 guard !Task.isCancelled, generation == danmakuGeneration else { return }
-                danmakuLoadError = error.localizedDescription
+                danmakuLoadError = "\(error.localizedDescription) 点按弹幕菜单可手动搜索。"
             }
         }
     }

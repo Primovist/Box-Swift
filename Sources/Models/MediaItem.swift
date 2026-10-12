@@ -260,6 +260,7 @@ struct PlaybackLine: Identifiable, Hashable, Codable {
 struct MediaItem: Identifiable, Hashable, Codable {
     let id: String
     let sourceKey: String
+    let sourceConfigurationURL: String?
     let sourceName: String
     let vodID: String
     let title: String
@@ -282,6 +283,7 @@ struct MediaItem: Identifiable, Hashable, Codable {
         sourceName: String,
         vodID: String,
         title: String,
+        sourceConfigurationURL: String? = nil,
         category: String = "",
         subtitle: String = "",
         summary: String = "",
@@ -295,9 +297,10 @@ struct MediaItem: Identifiable, Hashable, Codable {
         lines: [PlaybackLine] = []
     ) {
         self.sourceKey = sourceKey
+        self.sourceConfigurationURL = sourceConfigurationURL
         self.sourceName = sourceName
         self.vodID = vodID
-        self.id = "\(sourceKey)::\(vodID)"
+        self.id = sourceConfigurationURL.map { "\(sourceKey)::\(vodID)::\($0)" } ?? "\(sourceKey)::\(vodID)"
         self.title = title
         self.category = category
         self.subtitle = subtitle
@@ -323,6 +326,27 @@ struct MediaItem: Identifiable, Hashable, Codable {
             summary: summary,
             posterURL: posterURL,
             lines: [PlaybackLine(flag: "演示线路", episodes: episodes)]
+        )
+    }
+
+    func withSourceConfigurationURL(_ address: String) -> MediaItem {
+        MediaItem(
+            sourceKey: sourceKey,
+            sourceName: sourceName,
+            vodID: vodID,
+            title: title,
+            sourceConfigurationURL: address,
+            category: category,
+            subtitle: subtitle,
+            summary: summary,
+            year: year,
+            area: area,
+            language: language,
+            actor: actor,
+            director: director,
+            remarks: remarks,
+            posterURL: posterURL,
+            lines: lines
         )
     }
 }

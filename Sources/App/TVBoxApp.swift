@@ -9,7 +9,6 @@ struct TVBoxApp: App {
         WindowGroup {
             HomeView()
                 .environmentObject(catalog)
-                .preferredColorScheme(.dark)
         }
     }
 }

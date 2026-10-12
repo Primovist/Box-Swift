@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import CryptoKit
 
 @MainActor
 final class CatalogStore: ObservableObject {
@@ -19,6 +20,7 @@ final class CatalogStore: ObservableObject {
     @Published private(set) var canLoadMore = false
     @Published private(set) var loadMessage: String?
     @Published private(set) var sourceURL: String
+    @Published private(set) var savedSourceURLs: [String]
     @Published private(set) var liveGroups: [TVBoxLiveGroup] = []
     @Published private(set) var isLoadingLive = false
     @Published private(set) var recentSearches: [String]
@@ -56,14 +58,44 @@ final class CatalogStore: ObservableObject {
         let history = Self.decode([PlaybackHistory].self, key: "tvbox.playbackHistory") ?? []
         let searches = UserDefaults.standard.stringArray(forKey: "tvbox.recentSearches") ?? []
         let savedSourceURL = UserDefaults.standard.string(forKey: "tvbox.sourceURL") ?? ""
-        favoriteItems = favorites
-        historyItems = history
-        favoriteIDs = Set(favorites.map(\.id))
-        historyIDs = history.map { $0.item.id }
+        let storedSourceURLs = UserDefaults.standard.stringArray(forKey: "tvbox.savedSourceURLs") ?? []
+        let migratedFavorites = savedSourceURL.isEmpty ? favorites : favorites.map { item in
+            item.sourceConfigurationURL == nil ? item.withSourceConfigurationURL(savedSourceURL) : item
+        }
+        let migratedHistory = savedSourceURL.isEmpty ? history : history.map { record in
+            var migrated = record
+            if migrated.item.sourceConfigurationURL == nil {
+                migrated.item = migrated.item.withSourceConfigurationURL(savedSourceURL)
+            }
+            return migrated
+        }
+        favoriteItems = migratedFavorites
+        historyItems = migratedHistory
+        favoriteIDs = Set(migratedFavorites.map(\.id))
+        historyIDs = migratedHistory.map { $0.item.id }
         recentSearches = Array(searches.prefix(12))
         sourceURL = savedSourceURL
-        selectedSiteKey = UserDefaults.standard.string(forKey: "tvbox.selectedSite") ?? ""
-        selectedParserName = UserDefaults.standard.string(forKey: "tvbox.selectedParser") ?? ""
+        var uniqueSourceURLs: [String] = []
+        for address in [savedSourceURL] + storedSourceURLs where !address.isEmpty && !uniqueSourceURLs.contains(address) {
+            uniqueSourceURLs.append(address)
+        }
+        savedSourceURLs = uniqueSourceURLs
+        selectedSiteKey = UserDefaults.standard.string(forKey: Self.siteKey(for: savedSourceURL))
+            ?? UserDefaults.standard.string(forKey: "tvbox.selectedSite") ?? ""
+        selectedParserName = UserDefaults.standard.string(forKey: Self.parserKey(for: savedSourceURL))
+            ?? UserDefaults.standard.string(forKey: "tvbox.selectedParser") ?? ""
+        let cacheMigrationKey = "tvbox.configurationCacheMigration.v2"
+        if !UserDefaults.standard.bool(forKey: cacheMigrationKey) {
+            if !savedSourceURL.isEmpty,
+               UserDefaults.standard.data(forKey: Self.configurationKey(for: savedSourceURL)) == nil,
+               let legacyConfiguration = UserDefaults.standard.data(forKey: "tvbox.cachedConfiguration") {
+                UserDefaults.standard.set(legacyConfiguration, forKey: Self.configurationKey(for: savedSourceURL))
+            }
+            UserDefaults.standard.removeObject(forKey: "tvbox.cachedConfiguration")
+            UserDefaults.standard.set(true, forKey: cacheMigrationKey)
+        }
+        if migratedFavorites != favorites { persist(migratedFavorites, key: "tvbox.favoriteItems") }
+        if migratedHistory != history { persist(migratedHistory, key: "tvbox.playbackHistory") }
 
         if !savedSourceURL.isEmpty {
             let persistedAddress = savedSourceURL
@@ -147,12 +179,23 @@ final class CatalogStore: ObservableObject {
     func saveSourceURL(_ value: String) {
         sourceURL = value.trimmingCharacters(in: .whitespacesAndNewlines)
         UserDefaults.standard.set(sourceURL, forKey: "tvbox.sourceURL")
+        if !sourceURL.isEmpty {
+            savedSourceURLs.removeAll { $0 == sourceURL }
+            savedSourceURLs.insert(sourceURL, at: 0)
+            savedSourceURLs = Array(savedSourceURLs.prefix(20))
+            UserDefaults.standard.set(savedSourceURLs, forKey: "tvbox.savedSourceURLs")
+        }
     }
 
     func selectParser(_ name: String) {
         selectedParserName = name
-        if name.isEmpty { UserDefaults.standard.removeObject(forKey: "tvbox.selectedParser") }
-        else { UserDefaults.standard.set(name, forKey: "tvbox.selectedParser") }
+        if name.isEmpty {
+            UserDefaults.standard.removeObject(forKey: "tvbox.selectedParser")
+            UserDefaults.standard.removeObject(forKey: Self.parserKey(for: sourceURL))
+        } else {
+            UserDefaults.standard.set(name, forKey: "tvbox.selectedParser")
+            UserDefaults.standard.set(name, forKey: Self.parserKey(for: sourceURL))
+        }
     }
 
     func loadRemoteCatalog() {
@@ -160,8 +203,16 @@ final class CatalogStore: ObservableObject {
     }
 
     func loadConfiguration(from address: String) async {
+        let previousAddress = UserDefaults.standard.string(forKey: "tvbox.sourceURL") ?? ""
+        let requestAddress = address.trimmingCharacters(in: .whitespacesAndNewlines)
         saveSourceURL(address)
-        let requestAddress = sourceURL
+        selectedSiteKey = UserDefaults.standard.string(forKey: Self.siteKey(for: requestAddress))
+            ?? (previousAddress == requestAddress ? (UserDefaults.standard.string(forKey: "tvbox.selectedSite") ?? "") : "")
+        selectedParserName = UserDefaults.standard.string(forKey: Self.parserKey(for: requestAddress))
+            ?? (previousAddress == requestAddress ? (UserDefaults.standard.string(forKey: "tvbox.selectedParser") ?? "") : "")
+        configuration = nil
+        categories = []
+        items = []
         configurationTask?.cancel()
         contentTask?.cancel()
         invalidateLiveLoad()
@@ -180,11 +231,12 @@ final class CatalogStore: ObservableObject {
                 if !loaded.parsers.contains(where: { $0.name == self.selectedParserName }) {
                     selectParser("")
                 }
-                UserDefaults.standard.set(data, forKey: "tvbox.cachedConfiguration")
+                UserDefaults.standard.set(data, forKey: Self.configurationKey(for: requestAddress))
                 if !loaded.sites.contains(where: { $0.key == self.selectedSiteKey }) {
                     selectedSiteKey = loaded.sites.first?.key ?? ""
                 }
                 UserDefaults.standard.set(selectedSiteKey, forKey: "tvbox.selectedSite")
+                UserDefaults.standard.set(selectedSiteKey, forKey: Self.siteKey(for: requestAddress))
                 liveGroups = loaded.liveGroups
                 hasLoadedLive = false
                 loadMessage = "已载入 tvbox.json：\(loaded.sites.count) 个 API 站点\(loaded.unsupportedSpiderCount > 0 ? "；已跳过 \(loaded.unsupportedSpiderCount) 个 Spider" : "")."
@@ -194,8 +246,9 @@ final class CatalogStore: ObservableObject {
             } catch {
                 guard generation == requestGeneration else { return }
                 loadMessage = error.localizedDescription
+                let cachedConfiguration = UserDefaults.standard.data(forKey: Self.configurationKey(for: requestAddress))
                 if configuration == nil,
-                   let cached = UserDefaults.standard.data(forKey: "tvbox.cachedConfiguration"),
+                   let cached = cachedConfiguration,
                    let fallback = try? TVBoxConfiguration(data: cached) {
                     invalidateLiveLoad()
                     configuration = fallback
@@ -218,6 +271,7 @@ final class CatalogStore: ObservableObject {
         guard configuration?.sites.contains(where: { $0.key == key }) == true else { return }
         selectedSiteKey = key
         UserDefaults.standard.set(key, forKey: "tvbox.selectedSite")
+        UserDefaults.standard.set(key, forKey: Self.siteKey(for: sourceURL))
         searchQuery = ""
         isSearchingAllSites = false
         globalSearchResults = []
@@ -290,7 +344,7 @@ final class CatalogStore: ObservableObject {
             do {
                 let result = try await service.search(for: site, query: query)
                 guard !Task.isCancelled, generation == requestGeneration else { return }
-                items = result.items
+                items = scoped(result.items)
                 currentPage = result.page
                 pageCount = result.pageCount
                 canLoadMore = currentPage < pageCount
@@ -314,8 +368,12 @@ final class CatalogStore: ObservableObject {
     }
 
     func detail(for item: MediaItem) async -> MediaItem {
-        guard let site = configuration?.sites.first(where: { $0.key == item.sourceKey }) else { return item }
-        do { return try await service.detail(for: item, site: site) }
+        let configurationAddress = item.sourceConfigurationURL ?? sourceURL
+        guard await selectConfiguration(for: item),
+              sourceURL == configurationAddress,
+              let configuration,
+              let site = configuration.sites.first(where: { $0.key == item.sourceKey }) else { return item }
+        do { return try await service.detail(for: item, site: site).withSourceConfigurationURL(configurationAddress) }
         catch {
             loadMessage = error.localizedDescription
             return item
@@ -329,9 +387,16 @@ final class CatalogStore: ObservableObject {
         queueIndex requestedIndex: Int? = nil,
         parserName: String? = nil
     ) async throws -> PlaybackRequest {
-        let site = configuration?.sites.first { $0.key == item.sourceKey }
+        guard await selectConfiguration(for: item) else {
+            throw CatalogService.CatalogError.noPlayableURL
+        }
+        let selectedConfiguration = configuration
+        if let itemAddress = item.sourceConfigurationURL, sourceURL != itemAddress {
+            throw CatalogService.CatalogError.noPlayableURL
+        }
+        let site = selectedConfiguration?.sites.first { $0.key == item.sourceKey }
         let resolution: PlaybackResolution
-        if let site, let configuration {
+        if let site, let configuration = selectedConfiguration {
             resolution = try await service.resolve(
                 item: item,
                 episode: episode,
@@ -339,6 +404,8 @@ final class CatalogStore: ObservableObject {
                 configuration: configuration,
                 parserName: parserName ?? selectedParserName
             )
+        } else if item.sourceConfigurationURL != nil {
+            throw CatalogService.CatalogError.noPlayableURL
         } else if let url = URL(string: episode.address), ["http", "https", "rtsp", "rtmp"].contains(url.scheme?.lowercased() ?? "") {
             resolution = PlaybackResolution(url: url, headers: episode.headers)
         } else {
@@ -435,14 +502,14 @@ final class CatalogStore: ObservableObject {
             currentPage = 1
             pageCount = 1
             if !response.featuredItems.isEmpty {
-                items = response.featuredItems
+                items = scoped(response.featuredItems)
                 canLoadMore = false
             } else if !response.categories.isEmpty {
                 let first = response.categories[0]
                 selectedCategoryID = first.id
                 let page = try await service.loadPage(for: site, category: first, page: 1)
                 guard !Task.isCancelled, generation == requestGeneration else { return }
-                items = page.items
+                items = scoped(page.items)
                 currentPage = page.page
                 pageCount = page.pageCount
                 canLoadMore = page.page < page.pageCount
@@ -481,10 +548,10 @@ final class CatalogStore: ObservableObject {
             do {
                 let result = try await service.loadPage(for: site, category: category, page: requestedPage, filters: filters)
                 guard !Task.isCancelled, generation == requestGeneration else { return }
-                if reset { items = result.items }
+                if reset { items = scoped(result.items) }
                 else {
                     let existing = Set(items.map(\.id))
-                    items.append(contentsOf: result.items.filter { !existing.contains($0.id) })
+                    items.append(contentsOf: scoped(result.items).filter { !existing.contains($0.id) })
                 }
                 currentPage = requestedPage
                 pageCount = result.pageCount
@@ -517,7 +584,7 @@ final class CatalogStore: ObservableObject {
                 let result = try await service.search(for: site, query: query, page: requestedPage)
                 guard !Task.isCancelled, generation == requestGeneration else { return }
                 var knownIDs = Set(items.map(\.id))
-                items.append(contentsOf: result.items.filter { knownIDs.insert($0.id).inserted })
+                items.append(contentsOf: scoped(result.items).filter { knownIDs.insert($0.id).inserted })
                 currentPage = requestedPage
                 pageCount = result.pageCount
                 canLoadMore = requestedPage < result.pageCount && !result.items.isEmpty
@@ -551,7 +618,7 @@ final class CatalogStore: ObservableObject {
             let site = sites[index]
             globalSearchPageBySite[site.key] = max(1, page.page)
             globalSearchPageCountBySite[site.key] = max(page.page, page.pageCount)
-            results.append(contentsOf: page.items)
+            results.append(contentsOf: scoped(page.items))
         }
         items = results
         globalSearchResults = results
@@ -595,7 +662,7 @@ final class CatalogStore: ObservableObject {
                 guard let page else { continue }
                 self.globalSearchPageBySite[siteKey] = max(requestedPage, page.page)
                 self.globalSearchPageCountBySite[siteKey] = max(page.page, page.pageCount)
-                self.items.append(contentsOf: page.items.filter { knownIDs.insert($0.id).inserted })
+                self.items.append(contentsOf: self.scoped(page.items).filter { knownIDs.insert($0.id).inserted })
             }
             self.globalSearchResults = self.items
             self.canLoadMore = self.globalSearchSites.contains {
@@ -616,6 +683,39 @@ final class CatalogStore: ObservableObject {
     private static func normalizedTitle(_ title: String) -> String {
         String(title.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
             .filter { $0.isLetter || $0.isNumber })
+    }
+
+    private func scoped(_ items: [MediaItem]) -> [MediaItem] {
+        items.map { $0.withSourceConfigurationURL(sourceURL) }
+    }
+
+    private func selectConfiguration(for item: MediaItem) async -> Bool {
+        guard let address = item.sourceConfigurationURL,
+              !address.isEmpty else { return true }
+        if address != sourceURL || configuration == nil {
+            if address != sourceURL {
+                await loadConfiguration(from: address)
+            }
+            let task = configurationTask
+            await task?.value
+        }
+        return sourceURL == address && configuration != nil
+    }
+
+    private static func storageSuffix(for address: String) -> String {
+        SHA256.hash(data: Data(address.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func configurationKey(for address: String) -> String {
+        "tvbox.cachedConfiguration.\(storageSuffix(for: address))"
+    }
+
+    private static func siteKey(for address: String) -> String {
+        "tvbox.selectedSite.\(storageSuffix(for: address))"
+    }
+
+    private static func parserKey(for address: String) -> String {
+        "tvbox.selectedParser.\(storageSuffix(for: address))"
     }
 
     private func invalidateLiveLoad() {

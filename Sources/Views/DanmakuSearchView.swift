@@ -230,14 +230,14 @@ struct DanmakuSearchView: View {
                     .frame(width: 38, height: 38)
                     .background(Color.tvboxCyan.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(.white).lineLimit(2)
+                    Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.primary).lineLimit(2)
                     Text(subtitle).font(.system(size: 11)).foregroundStyle(Color.tvboxMuted).lineLimit(2)
                 }
                 Spacer(minLength: 8)
                 Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(Color.tvboxMuted)
             }
             .padding(12)
-            .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 15))
+            .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 15))
         }
         .buttonStyle(FocusAwareButtonStyle())
     }
@@ -334,7 +334,7 @@ struct DanmakuPreferencesForm: View {
         VStack(alignment: .leading, spacing: 17) {
             Label("弹幕源", systemImage: "server.rack")
                 .font(.system(size: 18, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.primary)
             urlField("DandanPlay 兼容的 danmu_api 地址", text: $apiAddress)
             Text("填写服务根地址；支持服务端将 Token 放在 URL 路径中。搜索作品后选择集数加载 XML 弹幕。")
                 .font(.system(size: 11))
@@ -372,7 +372,7 @@ struct DanmakuPreferencesForm: View {
     private func sliderRow(title: String, value: Binding<Double>, range: ClosedRange<Double>, suffix: String, percent: Bool = false, integer: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(.white)
+                Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(Color.primary)
                 Spacer()
                 Text(displayValue(value.wrappedValue, suffix: suffix, percent: percent, integer: integer))
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))

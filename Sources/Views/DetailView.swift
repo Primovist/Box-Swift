@@ -75,10 +75,10 @@ struct DetailView: View {
             Button { dismiss() } label: {
                 Label("返回", systemImage: "chevron.left")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color.primary)
                     .padding(.horizontal, 15)
                     .padding(.vertical, 11)
-                    .background(.white.opacity(0.08), in: Capsule())
+                    .background(Color.tvboxSurface, in: Capsule())
             }
             .buttonStyle(FocusAwareButtonStyle())
             Spacer()
@@ -109,7 +109,7 @@ struct DetailView: View {
                             .foregroundStyle(source.sourceKey == media.sourceKey ? .white : Color.tvboxMuted)
                             .padding(.horizontal, 13)
                             .padding(.vertical, 9)
-                            .background(source.sourceKey == media.sourceKey ? Color.tvboxAccent : Color.white.opacity(0.07), in: Capsule())
+                            .background(source.sourceKey == media.sourceKey ? Color.tvboxAccent : Color.tvboxSurface, in: Capsule())
                         }
                         .buttonStyle(FocusAwareButtonStyle())
                         .disabled(isResolving)
@@ -156,10 +156,10 @@ struct DetailView: View {
                     systemImage: "chevron.down"
                 )
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.primary)
                 .padding(.horizontal, 13)
                 .padding(.vertical, 9)
-                .background(.white.opacity(0.08), in: Capsule())
+                .background(Color.tvboxSurface, in: Capsule())
             }
             .buttonStyle(FocusAwareButtonStyle())
         }
@@ -184,7 +184,7 @@ struct DetailView: View {
                     SectionEyebrow(text: media.category.isEmpty ? media.sourceName : media.category)
                     Text(media.title)
                         .font(.system(size: 23, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.primary)
                         .fixedSize(horizontal: false, vertical: true)
                     if !media.subtitle.isEmpty {
                         Text(media.subtitle).font(.system(size: 13, weight: .medium)).foregroundStyle(Color.tvboxCyan)
@@ -196,7 +196,7 @@ struct DetailView: View {
             if !media.summary.isEmpty {
                 Text(media.summary)
                     .font(.system(size: 14))
-                    .foregroundStyle(.white.opacity(0.72))
+                    .foregroundStyle(Color.primary.opacity(0.72))
                     .lineSpacing(4)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -209,7 +209,7 @@ struct DetailView: View {
             SectionEyebrow(text: media.category.isEmpty ? media.sourceName : media.category)
             Text(media.title)
                 .font(.system(size: 36, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.primary)
                 .fixedSize(horizontal: false, vertical: true)
             if !media.subtitle.isEmpty {
                 Text(media.subtitle).font(.system(size: 16, weight: .medium)).foregroundStyle(Color.tvboxCyan)
@@ -218,7 +218,7 @@ struct DetailView: View {
             if !media.summary.isEmpty {
                 Text(media.summary)
                     .font(.system(size: 15))
-                    .foregroundStyle(.white.opacity(0.72))
+                    .foregroundStyle(Color.primary.opacity(0.72))
                     .lineSpacing(5)
                     .lineLimit(5)
             }
@@ -283,10 +283,10 @@ struct DetailView: View {
             } label: {
                 Label(catalog.isFavorite(media) ? "已收藏" : "收藏", systemImage: catalog.isFavorite(media) ? "heart.fill" : "heart")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(catalog.isFavorite(media) ? Color.tvboxAccent : Color.white)
+                    .foregroundStyle(catalog.isFavorite(media) ? Color.tvboxAccent : Color.primary)
                     .padding(.horizontal, compact ? 13 : 17)
                     .padding(.vertical, 13)
-                    .background(.white.opacity(0.08), in: Capsule())
+                    .background(Color.tvboxSurface, in: Capsule())
             }
             .buttonStyle(FocusAwareButtonStyle())
     }
@@ -297,7 +297,7 @@ struct DetailView: View {
             HStack(alignment: .lastTextBaseline) {
                 Text("选择线路与剧集")
                     .font(.system(size: wide ? 24 : 20, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color.primary)
                 Spacer()
                 if !media.remarks.isEmpty {
                     Text(media.remarks).font(.system(size: 12, weight: .medium)).foregroundStyle(Color.tvboxMuted)
@@ -316,7 +316,7 @@ struct DetailView: View {
                                     .foregroundStyle(selectedLine?.id == line.id ? .white : Color.tvboxMuted)
                                     .padding(.horizontal, 15)
                                     .padding(.vertical, 10)
-                                    .background(selectedLine?.id == line.id ? Color.tvboxAccent : Color.white.opacity(0.06), in: Capsule())
+                                    .background(selectedLine?.id == line.id ? Color.tvboxAccent : Color.tvboxSurface, in: Capsule())
                             }
                             .buttonStyle(FocusAwareButtonStyle())
                         }
@@ -337,14 +337,14 @@ struct DetailView: View {
                                     .foregroundStyle(Color.tvboxAccent)
                                 Text(episode.title)
                                     .font(.system(size: 14, weight: .semibold))
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(Color.primary)
                                     .lineLimit(1)
                                 Spacer(minLength: 3)
                                 if isResolving { ProgressView().tint(.white) }
                             }
                             .padding(14)
                             .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
-                            .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                             .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.white.opacity(0.08), lineWidth: 1))
                         }
                         .buttonStyle(FocusAwareButtonStyle())

@@ -1,23 +1,33 @@
 import SwiftUI
+import UIKit
 
 private enum TVBoxPalette {
-    static let background = Color(red: 0.035, green: 0.045, blue: 0.065)
-    static let surface = Color(red: 0.085, green: 0.105, blue: 0.14)
-    static let muted = Color(red: 0.58, green: 0.63, blue: 0.71)
-    static let accent = Color(red: 1.0, green: 0.27, blue: 0.31)
-    static let cyan = Color(red: 0.27, green: 0.83, blue: 0.88)
+    #if os(iOS)
+    static let background = Color(uiColor: .systemBackground)
+    static let surface = Color(uiColor: .secondarySystemBackground)
+    static let muted = Color(uiColor: .secondaryLabel)
+    #elseif os(tvOS)
+    static let background = Color(uiColor: UIColor { traits in
+        UIColor(white: traits.userInterfaceStyle == .dark ? 0.04 : 0.98, alpha: 1)
+    })
+    static let surface = Color(uiColor: UIColor { traits in
+        UIColor(white: traits.userInterfaceStyle == .dark ? 0.12 : 0.92, alpha: 1)
+    })
+    static let muted = Color(uiColor: UIColor { traits in
+        UIColor(white: traits.userInterfaceStyle == .dark ? 0.68 : 0.34, alpha: 1)
+    })
+    #else
+    static let background = Color.black
+    static let surface = Color.gray.opacity(0.15)
+    static let muted = Color.gray
+    #endif
+    static let accent = Color.accentColor
+    static let cyan = Color.accentColor
 }
 
 struct ScreenBackground: View {
     var body: some View {
-        ZStack {
-            TVBoxPalette.background
-            LinearGradient(
-                colors: [TVBoxPalette.accent.opacity(0.12), .clear, TVBoxPalette.cyan.opacity(0.06)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        }
+        TVBoxPalette.background
         .ignoresSafeArea()
     }
 }

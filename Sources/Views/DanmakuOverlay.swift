@@ -20,7 +20,7 @@ struct DanmakuOverlay: View {
                 Canvas { context, size in
                     guard isEnabled, !placements.isEmpty else { return }
                     let time = session.danmakuPlaybackTime(at: ProcessInfo.processInfo.systemUptime)
-                    draw(context: &context, size: size, time: time)
+                    draw(context: &context, size: size, safeAreaInsets: geometry.safeAreaInsets, time: time)
                 }
                 .clipped()
             }
@@ -49,15 +49,23 @@ struct DanmakuOverlay: View {
         return max(1, min(maxLines, Int(contentHeight * 0.52 / laneHeight)))
     }
 
-    private func draw(context: inout GraphicsContext, size: CGSize, time: Double) {
+    private func draw(context: inout GraphicsContext, size: CGSize, safeAreaInsets: EdgeInsets, time: Double) {
         let contentHeight = Double(size.height) * (size.width < size.height ? 0.60 : 0.76)
         let laneHeight = max(23, 25 * sizeScale + 7)
         let availableLanes = visibleLaneCount(for: size)
         let scrollDuration = DanmakuLayout.scrollDuration(speed: speed)
+        let playbackSeconds = time / 1_000
+        let oldestPossibleStart = playbackSeconds - 61
+        let firstIndex = lowerBound(in: placements, time: oldestPossibleStart)
+        let endIndex = upperBound(in: placements, time: playbackSeconds)
+        let topInset = size.width < size.height
+            ? max(3, Double(safeAreaInsets.top))
+            : 10.0
 
-        for placement in placements {
+        guard firstIndex < endIndex else { return }
+        for placement in placements[firstIndex..<endIndex] {
             let comment = placement.comment
-            let localTime = time / 1_000 - comment.time
+            let localTime = playbackSeconds - comment.time
             let duration: Double
             if comment.mode == .special {
                 duration = comment.displayDuration
@@ -84,7 +92,7 @@ struct DanmakuOverlay: View {
 
             switch comment.mode {
             case .fixedTop:
-                point = CGPoint(x: size.width / 2, y: CGFloat(14 + Double(lane) * laneHeight + textHeight / 2))
+                point = CGPoint(x: size.width / 2, y: CGFloat(topInset + Double(lane) * laneHeight + textHeight / 2))
                 commentOpacity = opacity
             case .fixedBottom:
                 point = CGPoint(x: size.width / 2, y: CGFloat(contentHeight - 16 - Double(lane) * laneHeight - textHeight / 2))
@@ -109,22 +117,41 @@ struct DanmakuOverlay: View {
             case .scrollLeftToRight, .reverse:
                 let left = -textWidth / 2
                 let right = Double(size.width) + textWidth / 2
-                let y = Double(size.height) * 0.16 + Double(lane) * laneHeight + textHeight / 2
+                let y = topInset + Double(lane) * laneHeight + textHeight / 2
                 point = CGPoint(x: CGFloat(left + (right - left) * progress), y: CGFloat(y))
                 commentOpacity = opacity
             case .scrollRightToLeft, .unknown:
                 let left = -textWidth / 2
                 let right = Double(size.width) + textWidth / 2
-                let y = Double(size.height) * 0.16 + Double(lane) * laneHeight + textHeight / 2
+                let y = topInset + Double(lane) * laneHeight + textHeight / 2
                 point = CGPoint(x: CGFloat(right - (right - left) * progress), y: CGFloat(y))
                 commentOpacity = opacity
             }
 
             var layer = context
             layer.opacity = min(1, max(0, commentOpacity))
-            layer.addFilter(.shadow(color: .black.opacity(0.9), radius: 1, x: 1, y: 1))
             layer.draw(resolved, at: point, anchor: .center)
         }
+    }
+
+    private func lowerBound(in values: [DanmakuPlacement], time: Double) -> Int {
+        var low = 0
+        var high = values.count
+        while low < high {
+            let middle = (low + high) / 2
+            if values[middle].comment.time < time { low = middle + 1 } else { high = middle }
+        }
+        return low
+    }
+
+    private func upperBound(in values: [DanmakuPlacement], time: Double) -> Int {
+        var low = 0
+        var high = values.count
+        while low < high {
+            let middle = (low + high) / 2
+            if values[middle].comment.time <= time { low = middle + 1 } else { high = middle }
+        }
+        return low
     }
 
     private func color(for comment: DanmakuComment) -> Color {

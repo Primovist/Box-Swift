@@ -208,7 +208,7 @@ struct MediaCard: View {
                     .aspectRatio(0.72, contentMode: .fit)
                 Text(item.title)
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color.primary)
                     .lineLimit(1)
                 let metadata = item.subtitle.isEmpty ? item.category : item.subtitle
                 if !metadata.isEmpty {

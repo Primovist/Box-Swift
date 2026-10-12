@@ -4,6 +4,14 @@
       "filename": "Background.png",
       "idiom": "universal",
       "scale": "1x"
+    },
+    {
+      "appearances": [
+        { "appearance": "luminosity", "value": "dark" }
+      ],
+      "filename": "Background-Dark.png",
+      "idiom": "universal",
+      "scale": "1x"
     }
   ],
   "info": {

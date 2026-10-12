@@ -3,8 +3,7 @@ import SwiftUI
 private enum HomeSection: String, CaseIterable, Identifiable {
     case video = "影视"
     case live = "直播"
-    case favorites = "收藏"
-    case history = "历史"
+    case search = "搜索"
 
     var id: String { rawValue }
 }
@@ -20,8 +19,8 @@ struct HomeView: View {
     @EnvironmentObject private var catalog: CatalogStore
     @AppStorage("tvbox.searchAcrossSites") private var searchAcrossSites = true
     @State private var searchText = ""
-    @State private var showingSearch = false
     @State private var section: HomeSection = .video
+    @State private var showingSettings = false
     #if os(iOS)
     @State private var isSectionNavigationCollapsed = false
     @State private var downwardScrollDistance: CGFloat = 0
@@ -29,7 +28,6 @@ struct HomeView: View {
     #endif
     @State private var playbackRequest: PlaybackRequest?
     @State private var epgChannel: TVBoxLiveChannel?
-    @State private var showingSiteChoices = false
     @State private var activeFilter: TVBoxFilter?
     @State private var activeLiveChannel: TVBoxLiveChannel?
     @State private var lockedGroup: TVBoxLiveGroup?
@@ -39,8 +37,7 @@ struct HomeView: View {
         switch section {
         case .video: return catalog.items
         case .live: return []
-        case .favorites: return catalog.favoriteItems
-        case .history: return catalog.historyItems.map(\.item)
+        case .search: return catalog.isSearching ? catalog.items : []
         }
     }
 
@@ -50,15 +47,6 @@ struct HomeView: View {
             NavigationStack {
                 ZStack {
                     ScreenBackground()
-                    if let wallpaperURL = catalog.configuration?.wallpaperURL {
-                        AsyncImage(url: wallpaperURL) { image in
-                            image.resizable().scaledToFill().overlay(.black.opacity(0.66))
-                        } placeholder: {
-                            Color.clear
-                        }
-                        .ignoresSafeArea()
-                        .accessibilityHidden(true)
-                    }
                     VStack(spacing: 0) {
                         #if os(tvOS)
                         VStack(alignment: .leading, spacing: 18) {
@@ -77,6 +65,20 @@ struct HomeView: View {
                                 header(wide: wide)
                                 #endif
 
+                                if section == .search {
+                                    searchField
+                                    searchHistorySection
+                                    if catalog.isSearching {
+                                        if !currentItems.isEmpty {
+                                            contentGrid(currentItems, wide: wide, titleOverride: "搜索结果")
+                                        } else if !catalog.isLoading {
+                                            emptyState
+                                        }
+                                    }
+                                    savedItemsSection("观看历史", items: catalog.historyItems.map(\.item), wide: wide, history: true)
+                                    savedItemsSection("我的收藏", items: catalog.favoriteItems, wide: wide)
+                                }
+
                                 if section == .video {
                                     if !catalog.categories.isEmpty { categoryPicker(wide: wide) }
                                     if catalog.selectedSite?.filterable == true,
@@ -84,7 +86,6 @@ struct HomeView: View {
                                        !category.filters.isEmpty {
                                         filterPicker(category: category)
                                     }
-                                    if !catalog.historyItems.isEmpty { recentSection(wide: wide) }
                                     if wide, catalog.selectedCategoryID.isEmpty, searchText.isEmpty,
                                        let featured = currentItems.first {
                                         NavigationLink(value: featured) { featuredCard(featured, wide: wide) }
@@ -94,9 +95,9 @@ struct HomeView: View {
 
                                 if section == .live {
                                     liveContent(wide: wide)
-                                } else if !currentItems.isEmpty {
+                                } else if section == .video && !currentItems.isEmpty {
                                     contentGrid(currentItems, wide: wide)
-                                } else if !catalog.isLoading && section != .live {
+                                } else if section == .video && !catalog.isLoading {
                                     emptyState
                                 }
 
@@ -135,31 +136,18 @@ struct HomeView: View {
                 .navigationDestination(for: MediaItem.self) { item in
                     DetailView(item: item)
                 }
+                .navigationDestination(isPresented: $showingSettings) {
+                    SettingsView()
+                }
                 .toolbar(.hidden, for: .navigationBar)
                 #if os(iOS)
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     sectionNavigationBar
                 }
-                .sheet(isPresented: $showingSearch) {
-                    searchSheet
-                        .presentationDetents([.medium, .large])
-                        .presentationDragIndicator(.visible)
-                }
-                #else
-                .fullScreenCover(isPresented: $showingSearch) {
-                    searchSheet
-                }
                 #endif
             }
-            .tint(.white)
+            .tint(Color.tvboxAccent)
             #if os(tvOS)
-            .confirmationDialog("切换片源", isPresented: $showingSiteChoices, titleVisibility: .visible) {
-                ForEach(catalog.configuration?.sites ?? []) { site in
-                    Button(site.key == catalog.selectedSiteKey ? "✓  \(site.name)" : site.name) {
-                        catalog.selectSite(site.key)
-                    }
-                }
-            }
             .confirmationDialog(activeFilter?.name ?? "筛选", isPresented: Binding(
                 get: { activeFilter != nil },
                 set: { if !$0 { activeFilter = nil } }
@@ -240,58 +228,12 @@ struct HomeView: View {
             HStack(spacing: 18) {
                 brand
                 Spacer(minLength: 8)
-                sitePicker
-                searchButton
-                settingsLink
             }
         } else {
             HStack(spacing: 10) {
                 brand
                 Spacer(minLength: 0)
-                sitePicker
-                searchButton
-                settingsLink
             }
-        }
-    }
-
-    private var searchButton: some View {
-        Button {
-            showingSearch = true
-        } label: {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 46, height: 46)
-                .background(.white.opacity(0.08), in: Circle())
-        }
-        .buttonStyle(FocusAwareButtonStyle())
-        .accessibilityLabel("搜索片名")
-    }
-
-    private var searchSheet: some View {
-        ZStack {
-            ScreenBackground()
-            VStack(alignment: .leading, spacing: 18) {
-                HStack {
-                    Text("搜索影视")
-                        .font(.system(size: 23, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                    Spacer()
-                    Button("完成") { showingSearch = false }
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Color.tvboxCyan)
-                        .buttonStyle(FocusAwareButtonStyle())
-                }
-                searchField
-                if !catalog.recentSearches.isEmpty {
-                    searchHistorySection
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 22)
-            .padding(.top, 24)
-            .frame(maxWidth: 700, maxHeight: .infinity, alignment: .top)
         }
     }
 
@@ -307,7 +249,7 @@ struct HomeView: View {
             }
             Text(catalog.selectedSite?.name ?? "选择片源")
                 .font(.system(size: 18, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.primary)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 180, alignment: .leading)
@@ -315,63 +257,12 @@ struct HomeView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var sitePicker: some View {
-        Group {
-            if let configuration = catalog.configuration {
-                #if os(tvOS)
-                Button { showingSiteChoices = true } label: {
-                    Label("切换片源", systemImage: "rectangle.stack")
-                        .font(.system(size: 13, weight: .semibold))
-                        .lineLimit(1)
-                        .padding(.horizontal, 14)
-                        .frame(minHeight: 44)
-                        .background(.white.opacity(0.08), in: Capsule())
-                }
-                .accessibilityLabel("切换片源")
-                .buttonStyle(FocusAwareButtonStyle())
-                #else
-                Menu {
-                    ForEach(configuration.sites) { site in
-                        Button {
-                            catalog.selectSite(site.key)
-                        } label: {
-                            if site.key == catalog.selectedSiteKey {
-                                Label(site.name, systemImage: "checkmark")
-                            } else {
-                                Text(site.name)
-                            }
-                        }
-                    }
-                } label: {
-                    Label("切换片源", systemImage: "rectangle.stack")
-                        .font(.system(size: 13, weight: .semibold))
-                        .lineLimit(1)
-                        .padding(.horizontal, 14)
-                        .frame(minHeight: 44)
-                        .background(.white.opacity(0.08), in: Capsule())
-                }
-                .accessibilityLabel("切换片源")
-                .buttonStyle(FocusAwareButtonStyle())
-                #endif
-            } else {
-                NavigationLink { SettingsView() } label: {
-                    Label("添加片源", systemImage: "plus")
-                        .font(.system(size: 13, weight: .semibold))
-                        .padding(.horizontal, 14)
-                        .frame(minHeight: 44)
-                        .background(.white.opacity(0.08), in: Capsule())
-                }
-                .buttonStyle(FocusAwareButtonStyle())
-            }
-        }
-    }
-
     private var searchField: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass").foregroundStyle(Color.tvboxMuted)
             TextField("搜索片名", text: $searchText)
                 .font(.system(size: 15))
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.primary)
                 .autocorrectionDisabled()
                 .disabled(searchAcrossSites
                     ? !(catalog.configuration?.sites.contains(where: \.searchable) ?? false)
@@ -401,7 +292,7 @@ struct HomeView: View {
                     .foregroundStyle(searchAcrossSites ? Color.tvboxCyan : Color.tvboxMuted)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 7)
-                    .background(.white.opacity(0.07), in: Capsule())
+                    .background(Color.tvboxSurface, in: Capsule())
             }
             .buttonStyle(FocusAwareButtonStyle())
             .accessibilityLabel(searchAcrossSites ? "全站搜索，切换本站" : "本站搜索，切换全站")
@@ -418,19 +309,8 @@ struct HomeView: View {
         .padding(.leading, 15)
         .padding(.trailing, 5)
         .frame(minHeight: 48)
-        .background(.white.opacity(0.07), in: Capsule())
+        .background(Color.tvboxSurface, in: Capsule())
         .overlay(Capsule().strokeBorder(.white.opacity(0.08), lineWidth: 1))
-    }
-
-    private var settingsLink: some View {
-        NavigationLink { SettingsView() } label: {
-            Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 15, weight: .semibold))
-                .frame(width: 46, height: 46)
-                .background(.white.opacity(0.08), in: Circle())
-        }
-        .buttonStyle(FocusAwareButtonStyle())
-        .accessibilityLabel("设置片源")
     }
 
     private func sectionPicker(wide: Bool) -> some View {
@@ -445,10 +325,17 @@ struct HomeView: View {
                         .foregroundStyle(section == value ? .white : Color.tvboxMuted)
                         .padding(.horizontal, wide ? 19 : 16)
                         .padding(.vertical, 11)
-                        .background(section == value ? Color.tvboxAccent : Color.white.opacity(0.06), in: Capsule())
+                        .background(section == value ? Color.tvboxAccent : Color.tvboxSurface, in: Capsule())
                 }
                 .buttonStyle(FocusAwareButtonStyle())
             }
+            Button { showingSettings = true } label: {
+                Label("设置", systemImage: "gearshape")
+                    .font(.system(size: 14, weight: .bold))
+                    .padding(.horizontal, wide ? 19 : 16)
+                    .padding(.vertical, 11)
+            }
+            .buttonStyle(FocusAwareButtonStyle())
             Spacer(minLength: 0)
             if section == .video, let site = catalog.selectedSite {
                 Text(site.type == 0 ? "XML API" : site.type == 4 ? "HTTP API" : "JSON API")
@@ -501,6 +388,19 @@ struct HomeView: View {
                         .accessibilityLabel(value.rawValue)
                         .accessibilityAddTraits(section == value ? .isSelected : [])
                     }
+                    Button { showingSettings = true } label: {
+                        VStack(spacing: 5) {
+                            Image(systemName: "gearshape")
+                                .font(.system(size: 18, weight: .regular))
+                            Text("设置")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundStyle(Color.tvboxMuted)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
                 }
                 .padding(7)
                 .background(.black.opacity(0.14), in: Capsule())
@@ -568,8 +468,7 @@ struct HomeView: View {
         switch value {
         case .video: return "play.rectangle.on.rectangle"
         case .live: return "dot.radiowaves.left.and.right"
-        case .favorites: return "heart"
-        case .history: return "clock.arrow.circlepath"
+        case .search: return "magnifyingglass"
         }
     }
     #endif
@@ -587,7 +486,7 @@ struct HomeView: View {
                             .foregroundStyle(catalog.selectedCategoryID == category.id ? .white : Color.tvboxMuted)
                             .padding(.horizontal, 15)
                             .padding(.vertical, 10)
-                            .background(catalog.selectedCategoryID == category.id ? Color.tvboxAccent : Color.white.opacity(0.055), in: Capsule())
+                            .background(catalog.selectedCategoryID == category.id ? Color.tvboxAccent : Color.tvboxSurface, in: Capsule())
                     }
                     .buttonStyle(FocusAwareButtonStyle())
                 }
@@ -623,10 +522,10 @@ struct HomeView: View {
                             }
                         }
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.8))
+                        .foregroundStyle(Color.primary.opacity(0.8))
                         .padding(.horizontal, 13)
                         .padding(.vertical, 9)
-                        .background(.white.opacity(0.07), in: Capsule())
+                        .background(Color.tvboxSurface, in: Capsule())
                     }
                     .buttonStyle(FocusAwareButtonStyle())
                     #endif
@@ -635,76 +534,70 @@ struct HomeView: View {
         }
     }
 
-    private func recentSection(wide: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 13) {
-            HStack {
-                SectionEyebrow(text: "继续观看")
-                Spacer()
-                Text("本机保存")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Color.tvboxMuted)
-            }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 15) {
-                    ForEach(catalog.historyItems) { record in
-                        MediaCard(item: record.item)
-                            .frame(width: wide ? 190 : 138)
-                            .overlay(alignment: .bottomTrailing) {
-                                if record.positionMilliseconds > 0 {
-                                    Image(systemName: "play.circle.fill")
-                                        .font(.system(size: 22))
-                                        .foregroundStyle(.white)
-                                        .padding(10)
-                                }
-                            }
-                    }
-                }
-            }
-        }
-    }
-
-    private func contentGrid(_ values: [MediaItem], wide: Bool) -> some View {
+    private func contentGrid(_ values: [MediaItem], wide: Bool, titleOverride: String? = nil) -> some View {
         let columnCount = wide ? 5 : 2
         let columns = Array(repeating: GridItem(.flexible(), spacing: wide ? 22 : 13), count: columnCount)
         return VStack(alignment: .leading, spacing: 15) {
             HStack(alignment: .lastTextBaseline) {
                 VStack(alignment: .leading, spacing: 5) {
-                    SectionEyebrow(text: section == .favorites ? "我的收藏" : section == .history ? "观看记录" : (catalog.isSearchingAllSites ? "全站搜索" : (catalog.selectedCategory?.name ?? "影视内容")))
-                    Text(section == .favorites ? "收藏夹" : section == .history ? "最近播放" : catalog.isSearching ? "搜索结果" : "正在探索")
+                    SectionEyebrow(text: titleOverride ?? (catalog.isSearchingAllSites ? "全站搜索" : (catalog.selectedCategory?.name ?? "影视内容")))
+                    Text(titleOverride ?? (catalog.isSearching ? "搜索结果" : "正在探索"))
                         .font(.system(size: wide ? 26 : 22, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.primary)
                 }
                 Spacer()
-                if section == .history {
-                    Button {
-                        catalog.clearHistory()
-                    } label: {
-                        Label("清空", systemImage: "trash")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(Color.tvboxMuted)
-                    }
-                    .buttonStyle(FocusAwareButtonStyle())
-                } else {
-                    Text("\(values.count) 个条目")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color.tvboxMuted)
-                }
+                Text("\(values.count) 个条目")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.tvboxMuted)
             }
             LazyVGrid(columns: columns, alignment: .leading, spacing: wide ? 24 : 18) {
                 ForEach(values) { item in
-                    MediaCard(item: item)
-                        .contextMenu {
-                            if section == .history {
-                                Button(role: .destructive) {
-                                    catalog.removeHistory(item.id)
-                                } label: {
-                                    Label("从历史记录移除", systemImage: "trash")
-                                }
+                        MediaCard(item: item)
+                            .onAppear {
+                            if section == .video || (section == .search && catalog.isSearching) {
+                                catalog.loadMoreIfNeeded(current: item)
                             }
                         }
-                        .onAppear {
-                            if section == .video { catalog.loadMoreIfNeeded(current: item) }
-                        }
+                }
+            }
+            #if os(tvOS)
+            .focusSection()
+            #endif
+        }
+    }
+
+    private func savedItemsSection(_ title: String, items: [MediaItem], wide: Bool, history: Bool = false) -> some View {
+        let columns = Array(repeating: GridItem(.flexible(), spacing: wide ? 22 : 13), count: wide ? 5 : 2)
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                SectionEyebrow(text: title)
+                Spacer()
+                if history {
+                    Button("清空") { catalog.clearHistory() }
+                        .font(.system(size: 12, weight: .medium))
+                        .buttonStyle(FocusAwareButtonStyle())
+                }
+                Text("\(items.count) 个条目")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.tvboxMuted)
+            }
+            LazyVGrid(columns: columns, alignment: .leading, spacing: wide ? 24 : 18) {
+                if items.isEmpty {
+                    Text(history ? "还没有观看记录。" : "还没有收藏内容。")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.tvboxMuted)
+                        .frame(maxWidth: .infinity, minHeight: 74, alignment: .leading)
+                } else {
+                    ForEach(items) { item in
+                        MediaCard(item: item)
+                            .contextMenu {
+                                if history {
+                                    Button(role: .destructive) { catalog.removeHistory(item.id) } label: {
+                                        Label("从历史记录移除", systemImage: "trash")
+                                    }
+                                }
+                            }
+                    }
                 }
             }
             #if os(tvOS)
@@ -721,11 +614,11 @@ struct HomeView: View {
                 SectionEyebrow(text: item.category.isEmpty ? "推荐" : item.category)
                 Text(item.title)
                     .font(.system(size: 36, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color.primary)
                     .lineLimit(2)
                 Text(item.summary.isEmpty ? item.subtitle : item.summary)
                     .font(.system(size: 14))
-                    .foregroundStyle(.white.opacity(0.72))
+                    .foregroundStyle(Color.primary.opacity(0.72))
                     .lineLimit(3)
                 HStack(spacing: 12) {
                     if !item.year.isEmpty { Label(item.year, systemImage: "calendar") }
@@ -736,7 +629,7 @@ struct HomeView: View {
                 .foregroundStyle(Color.tvboxMuted)
                 Label("查看详情", systemImage: "arrow.right")
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color.primary)
                     .padding(.horizontal, 17)
                     .padding(.vertical, 11)
                     .background(Color.tvboxAccent, in: Capsule())
@@ -745,7 +638,7 @@ struct HomeView: View {
             .padding(.trailing, 25)
         }
         .padding(14)
-        .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 24).strokeBorder(.white.opacity(0.08), lineWidth: 1))
     }
 
@@ -756,7 +649,7 @@ struct HomeView: View {
         } else if catalog.liveGroups.isEmpty {
             VStack(spacing: 12) {
                 Image(systemName: "antenna.radiowaves.left.and.right").font(.system(size: 32)).foregroundStyle(Color.tvboxCyan)
-                Text("tvbox.json 没有可用的直播频道").font(.system(size: 18, weight: .bold)).foregroundStyle(.white)
+                Text("tvbox.json 没有可用的直播频道").font(.system(size: 18, weight: .bold)).foregroundStyle(Color.primary)
                 Text("支持配置内 lives 分组，或在 lives[].url 中提供 TXT/M3U 地址。")
                     .font(.system(size: 13)).foregroundStyle(Color.tvboxMuted).multilineTextAlignment(.center)
             }
@@ -768,9 +661,9 @@ struct HomeView: View {
                         Button { lockedGroup = group } label: {
                             Label("\(group.name) · 需要密码", systemImage: "lock.fill")
                                 .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(Color.primary)
                                 .frame(maxWidth: .infinity, minHeight: 64)
-                                .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                         }
                         .buttonStyle(FocusAwareButtonStyle())
                     } else {
@@ -829,7 +722,7 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(channel.name)
                     .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color.primary)
                     .lineLimit(1)
                 Text("\(channel.sources.count) 条线路").font(.system(size: 11)).foregroundStyle(Color.tvboxMuted)
             }
@@ -838,15 +731,15 @@ struct HomeView: View {
         }
         .padding(15)
         .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
-        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private var emptyState: some View {
         VStack(spacing: 11) {
             Image(systemName: "film").font(.system(size: 30, weight: .light)).foregroundStyle(Color.tvboxCyan)
-            Text(section == .favorites ? "还没有收藏" : section == .history ? "还没有播放记录" : "没有找到内容")
-                .font(.system(size: 19, weight: .bold, design: .rounded)).foregroundStyle(.white)
-            Text(section == .video ? "检查 tvbox.json 站点或搜索条件。" : "播放内容后会显示在这里。")
+            Text(section == .search ? "没有找到内容" : "没有找到内容")
+                .font(.system(size: 19, weight: .bold, design: .rounded)).foregroundStyle(Color.primary)
+            Text("检查 tvbox.json 站点或搜索条件。")
                 .font(.system(size: 13)).foregroundStyle(Color.tvboxMuted)
         }
         .frame(maxWidth: .infinity, minHeight: 200)
@@ -862,9 +755,8 @@ struct HomeView: View {
     }
 
     private func submitSearch() {
-        section = .video
+        section = .search
         catalog.search(searchText, acrossAllSites: searchAcrossSites)
-        showingSearch = false
     }
 
     private var searchHistorySection: some View {
@@ -886,10 +778,10 @@ struct HomeView: View {
                         } label: {
                             Label(query, systemImage: "clock.arrow.circlepath")
                                 .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(.white.opacity(0.88))
+                                .foregroundStyle(Color.primary.opacity(0.88))
                                 .padding(.horizontal, 13)
                                 .padding(.vertical, 9)
-                                .background(.white.opacity(0.07), in: Capsule())
+                                .background(Color.tvboxSurface, in: Capsule())
                         }
                         .buttonStyle(FocusAwareButtonStyle())
                     }
@@ -908,10 +800,10 @@ struct HomeView: View {
             }
         }
         .font(.system(size: 12, weight: .medium))
-        .foregroundStyle(.white.opacity(0.8))
+        .foregroundStyle(Color.primary.opacity(0.8))
         .padding(.horizontal, 13)
         .padding(.vertical, 9)
-        .background(.white.opacity(0.07), in: Capsule())
+        .background(Color.tvboxSurface, in: Capsule())
     }
 
     private func playLive(channel: TVBoxLiveChannel, source: TVBoxLiveSource) {
@@ -958,7 +850,7 @@ private struct LiveGroupPasswordSheet: View {
             ScreenBackground()
             VStack(alignment: .leading, spacing: 18) {
                 SectionEyebrow(text: "受限直播分组")
-                Text(group.name).font(.system(size: 25, weight: .bold, design: .rounded)).foregroundStyle(.white)
+                Text(group.name).font(.system(size: 25, weight: .bold, design: .rounded)).foregroundStyle(Color.primary)
                 SecureField("输入分组密码", text: $password)
                     #if os(iOS)
                     .textFieldStyle(.roundedBorder)
@@ -1022,7 +914,7 @@ private struct LiveEPGSheet: View {
                             SectionEyebrow(text: "节目单")
                             Text(channel.name)
                                 .font(.system(size: 26, weight: .bold, design: .rounded))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(Color.primary)
                         }
                         Spacer()
                         Button("完成") { dismiss() }
@@ -1041,7 +933,7 @@ private struct LiveEPGSheet: View {
                                         .foregroundStyle(Calendar.current.isDate(date, inSameDayAs: selectedDate) ? .white : Color.tvboxMuted)
                                         .padding(.horizontal, 13)
                                         .padding(.vertical, 9)
-                                        .background(Calendar.current.isDate(date, inSameDayAs: selectedDate) ? Color.tvboxAccent : Color.white.opacity(0.07), in: Capsule())
+                                        .background(Calendar.current.isDate(date, inSameDayAs: selectedDate) ? Color.tvboxAccent : Color.tvboxSurface, in: Capsule())
                                 }
                                 .buttonStyle(FocusAwareButtonStyle())
                             }
@@ -1060,7 +952,7 @@ private struct LiveEPGSheet: View {
                                             .foregroundStyle(selectedSource?.id == source.id ? .white : Color.tvboxMuted)
                                             .padding(.horizontal, 13)
                                             .padding(.vertical, 9)
-                                            .background(selectedSource?.id == source.id ? Color.tvboxCyan.opacity(0.72) : Color.white.opacity(0.07), in: Capsule())
+                                            .background(selectedSource?.id == source.id ? Color.tvboxCyan.opacity(0.72) : Color.tvboxSurface, in: Capsule())
                                     }
                                     .buttonStyle(FocusAwareButtonStyle())
                                 }
@@ -1099,7 +991,7 @@ private struct LiveEPGSheet: View {
                                     .frame(width: 52, alignment: .leading)
                                     Text(program.title)
                                         .font(.system(size: 14, weight: .medium))
-                                        .foregroundStyle(.white)
+                                        .foregroundStyle(Color.primary)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                     Image(systemName: playbackTarget(for: program) == nil ? "info.circle" : "play.circle.fill")
                                         .font(.system(size: 11))

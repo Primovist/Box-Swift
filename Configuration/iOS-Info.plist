@@ -24,7 +24,6 @@
         <string>UIInterfaceOrientationLandscapeRight</string>
     </array>
     <key>UILaunchScreen</key><dict/>
-    <key>UIUserInterfaceStyle</key><string>Dark</string>
     <key>NSLocalNetworkUsageDescription</key><string>用于访问你配置的局域网视频目录和媒体流。</string>
     <key>NSAppTransportSecurity</key>
     <dict>
