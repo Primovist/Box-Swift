@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct DanmakuOverlay: View {
-    let session: VLCPlaybackSession
+    @ObservedObject var session: VLCPlaybackSession
     let comments: [DanmakuComment]
     let generation: Int
 
@@ -16,10 +16,10 @@ struct DanmakuOverlay: View {
     var body: some View {
         GeometryReader { geometry in
             let key = layoutKey(for: geometry.size)
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !isEnabled || !session.isPlaying || placements.isEmpty)) { timeline in
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !isEnabled || !session.isDanmakuClockAdvancing || placements.isEmpty)) { _ in
                 Canvas { context, size in
                     guard isEnabled, !placements.isEmpty else { return }
-                    let time = playbackTime(at: timeline.date)
+                    let time = session.danmakuPlaybackTime(at: ProcessInfo.processInfo.systemUptime)
                     draw(context: &context, size: size, time: time)
                 }
                 .clipped()
@@ -47,13 +47,6 @@ struct DanmakuOverlay: View {
         let contentHeight = Double(size.height) * (portrait ? 0.60 : 0.76)
         let laneHeight = max(23, 25 * sizeScale + 7)
         return max(1, min(maxLines, Int(contentHeight * 0.52 / laneHeight)))
-    }
-
-    private func playbackTime(at date: Date) -> Double {
-        let drift = session.isPlaying
-            ? max(0, date.timeIntervalSince(session.positionUpdatedAt)) * 1_000 * Double(session.playbackRate)
-            : 0
-        return Double(session.currentMilliseconds) + drift
     }
 
     private func draw(context: inout GraphicsContext, size: CGSize, time: Double) {

@@ -11,6 +11,8 @@ struct SettingsView: View {
     @State private var referer = ""
     @State private var validationMessage: String?
     @State private var playbackRequest: PlaybackRequest?
+    @State private var posterCacheSize: Int64 = 0
+    @State private var cacheMessage: String?
 
     var body: some View {
         GeometryReader { geometry in
@@ -34,6 +36,7 @@ struct SettingsView: View {
                         }
                         scopeSection
                         playerPreferencesSection
+                        posterCacheSection
                         danmakuPreferencesSection
                     }
                     .frame(maxWidth: 1120, alignment: .leading)
@@ -48,7 +51,10 @@ struct SettingsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.hidden, for: .navigationBar)
             #endif
-            .onAppear { endpoint = catalog.sourceURL }
+            .onAppear {
+                endpoint = catalog.sourceURL
+                Task { posterCacheSize = await PosterImageCache.cachedSize() }
+            }
         }
         .fullScreenCover(item: $playbackRequest) { request in
             PlayerScreen(request: request)
@@ -211,6 +217,40 @@ struct SettingsView: View {
             .padding(20)
             .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(.white.opacity(0.08), lineWidth: 1))
+    }
+
+    private var posterCacheSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("海报缓存", systemImage: "photo.stack")
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+            Text("已缓存 \(ByteCountFormatter.string(fromByteCount: posterCacheSize, countStyle: .file))。清理后，海报会在下次显示时重新下载。")
+                .font(.system(size: 12))
+                .foregroundStyle(Color.tvboxMuted)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(role: .destructive) {
+                Task {
+                    await PosterImageCache.clear()
+                    posterCacheSize = await PosterImageCache.cachedSize()
+                    cacheMessage = "海报缓存已清理。"
+                }
+            } label: {
+                Label("清理缓存", systemImage: "trash")
+                    .frame(maxWidth: .infinity, minHeight: 42)
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(20)
+        .background(Color.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(.white.opacity(0.08), lineWidth: 1))
+        .alert("海报缓存", isPresented: Binding(
+            get: { cacheMessage != nil },
+            set: { if !$0 { cacheMessage = nil } }
+        )) {
+            Button("好", role: .cancel) { cacheMessage = nil }
+        } message: {
+            Text(cacheMessage ?? "")
+        }
     }
 
     @ViewBuilder

@@ -332,21 +332,15 @@ struct DetailView: View {
                                 Image(systemName: "play.circle.fill")
                                     .font(.system(size: 21))
                                     .foregroundStyle(Color.tvboxAccent)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(episode.title)
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundStyle(.white)
-                                        .lineLimit(1)
-                                    Text(URL(string: episode.address)?.host ?? episode.address)
-                                        .font(.system(size: 10, weight: .medium))
-                                        .foregroundStyle(Color.tvboxMuted)
-                                        .lineLimit(1)
-                                }
+                                Text(episode.title)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(.white)
+                                    .lineLimit(1)
                                 Spacer(minLength: 3)
                                 if isResolving { ProgressView().tint(.white) }
                             }
                             .padding(14)
-                            .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+                            .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
                             .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                             .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.white.opacity(0.08), lineWidth: 1))
                         }

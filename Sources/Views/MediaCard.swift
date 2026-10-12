@@ -1,4 +1,6 @@
 import SwiftUI
+import CryptoKit
+import UIKit
 
 struct MediaArtwork: View {
     let item: MediaItem
@@ -26,10 +28,9 @@ struct MediaArtwork: View {
                     .blur(radius: 3)
 
                 if let posterURL = item.posterURL {
-                    AsyncImage(url: posterURL) { image in
-                        image.resizable().scaledToFill()
-                    } placeholder: {
+                    ZStack {
                         LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+                        CachedPosterImage(url: posterURL)
                     }
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .clipped()
@@ -62,6 +63,126 @@ struct MediaArtwork: View {
             }
         }
         .accessibilityLabel("\(item.title)，\(item.category)")
+    }
+}
+
+@MainActor
+enum PosterImageCache {
+    private static let memory: NSCache<NSURL, UIImage> = {
+        let cache = NSCache<NSURL, UIImage>()
+        cache.totalCostLimit = 96 * 1024 * 1024
+        return cache
+    }()
+    private static var inFlight: [URL: (UUID, Task<UIImage?, Never>)] = [:]
+    private static var generation = 0
+
+    static func image(for url: URL) async -> UIImage? {
+        if let cached = memory.object(forKey: url as NSURL) { return cached }
+        if let (_, task) = inFlight[url] { return await task.value }
+
+        let token = UUID()
+        let currentGeneration = generation
+        let key = cacheKey(for: url)
+        let task = Task<UIImage?, Never> {
+            if let data = await PosterDiskStore.shared.data(for: key), let image = UIImage(data: data) {
+                await store(image, data: data, for: url, key: key, token: token, generation: currentGeneration)
+                return image
+            }
+
+            guard let (data, response) = try? await URLSession.shared.data(from: url),
+                  (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true,
+                  let image = UIImage(data: data) else { return nil }
+            await store(image, data: data, for: url, key: key, token: token, generation: currentGeneration)
+            return image
+        }
+        inFlight[url] = (token, task)
+        let image = await task.value
+        if inFlight[url]?.0 == token { inFlight[url] = nil }
+        return image
+    }
+
+    static func clear() async {
+        generation += 1
+        inFlight.values.forEach { $0.1.cancel() }
+        inFlight.removeAll()
+        memory.removeAllObjects()
+        await PosterDiskStore.shared.clear()
+    }
+
+    static func cachedSize() async -> Int64 {
+        await PosterDiskStore.shared.cachedSize()
+    }
+
+    private static func store(_ image: UIImage, data: Data, for url: URL, key: String, token: UUID, generation taskGeneration: Int) async {
+        guard generation == taskGeneration else { return }
+        let decodedCost = Int(image.size.width * image.scale * image.size.height * image.scale * 4)
+        memory.setObject(image, forKey: url as NSURL, cost: decodedCost)
+        await PosterDiskStore.shared.write(data, for: key, generation: taskGeneration)
+        if inFlight[url]?.0 == token { inFlight[url] = nil }
+    }
+
+    private static func cacheKey(for url: URL) -> String {
+        let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return digest
+    }
+}
+
+private actor PosterDiskStore {
+    static let shared = PosterDiskStore()
+    private var generation = 0
+
+    private var directory: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("TVBoxPosterImages", isDirectory: true)
+    }
+
+    func data(for key: String) -> Data? {
+        try? Data(contentsOf: fileURL(for: key))
+    }
+
+    func write(_ data: Data, for key: String, generation expectedGeneration: Int) {
+        guard generation == expectedGeneration else { return }
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? data.write(to: fileURL(for: key), options: .atomic)
+    }
+
+    func clear() {
+        generation += 1
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    func cachedSize() -> Int64 {
+        guard let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
+        return enumerator.compactMap { $0 as? URL }
+            .compactMap { try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize }
+            .reduce(Int64(0)) { $0 + Int64($1) }
+    }
+
+    private func fileURL(for key: String) -> URL {
+        directory.appendingPathComponent(key).appendingPathExtension("image")
+    }
+}
+
+private struct CachedPosterImage: View {
+    let url: URL
+    @State private var image: UIImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            }
+        }
+        .task(id: url) {
+            let requestedURL = url
+            let loadedImage = await PosterImageCache.image(for: requestedURL)
+            guard !Task.isCancelled, requestedURL == url else { return }
+            image = loadedImage
+        }
     }
 }
 

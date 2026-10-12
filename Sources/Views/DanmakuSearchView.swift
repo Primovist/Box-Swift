@@ -7,11 +7,17 @@ struct DanmakuSearchView: View {
     @State private var animeResults: [DanmakuAnime] = []
     @State private var episodeResults: [DanmakuEpisode] = []
     @State private var selectedAnime: DanmakuAnime?
+    @State private var suggestedEpisodeIDs: Set<String> = []
     @State private var isLoading = false
     @State private var message: String?
     @State private var requestGeneration = 0
 
     let initialQuery: String
+    var mediaTitle: String = ""
+    var mediaCategory: String = ""
+    var mediaYear: String = ""
+    var currentEpisodeTitle: String = ""
+    var expectsEpisodeMatch = false
     let onLoad: ([DanmakuComment], String) -> Void
     private let service = DanmakuService()
 
@@ -20,6 +26,17 @@ struct DanmakuSearchView: View {
             ZStack {
                 ScreenBackground()
                 VStack(alignment: .leading, spacing: 16) {
+                    if !mediaTitle.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("当前播放")
+                                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                .foregroundStyle(Color.tvboxCyan)
+                            Text(playbackContext)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(Color.tvboxMuted)
+                                .lineLimit(2)
+                        }
+                    }
                     HStack(spacing: 10) {
                         searchField
                         Button {
@@ -72,13 +89,25 @@ struct DanmakuSearchView: View {
 
                             if selectedAnime == nil {
                                 ForEach(animeResults) { anime in
-                                    resultButton(title: anime.title, subtitle: "选择作品", icon: "film") {
+                                    resultButton(title: anime.title, subtitle: animeSubtitle(anime), icon: "film") {
                                         Task { await loadEpisodes(for: anime) }
                                     }
                                 }
                             } else {
-                                ForEach(episodeResults) { episode in
-                                    resultButton(title: episode.title, subtitle: selectedAnime?.title ?? "", icon: "play.rectangle") {
+                                if let selectedAnime {
+                                    Text("已选择：\(selectedAnime.title) · \(animeSubtitle(selectedAnime))")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(Color.tvboxCyan)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .lineLimit(2)
+                                }
+                                ForEach(orderedEpisodeResults) { episode in
+                                    let suggested = suggestedEpisodeIDs.contains(episode.id)
+                                    resultButton(
+                                        title: episode.title,
+                                        subtitle: suggested ? "与当前第 \(currentEpisodeNumber ?? 0) 集相符 · 点击确认" : "选择此集加载弹幕",
+                                        icon: suggested ? "checkmark.circle.fill" : "play.rectangle"
+                                    ) {
                                         Task { await loadComments(for: episode) }
                                     }
                                 }
@@ -112,18 +141,64 @@ struct DanmakuSearchView: View {
     @ViewBuilder
     private var searchField: some View {
         #if os(iOS)
-        TextField("输入影片名称", text: $query)
+        TextField("搜索剧名或影片名", text: $query)
             .textFieldStyle(.roundedBorder)
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .submitLabel(.search)
             .onSubmit { Task { await search() } }
         #else
-        TextField("输入影片名称", text: $query)
+        TextField("搜索剧名或影片名", text: $query)
             .textFieldStyle(.plain)
             .autocorrectionDisabled()
             .onSubmit { Task { await search() } }
         #endif
+    }
+
+    private var playbackContext: String {
+        [mediaTitle, mediaCategory, mediaYear, currentEpisodeTitle]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+    }
+
+    private var currentEpisodeNumber: Int? {
+        DanmakuService.episodeNumber(in: currentEpisodeTitle)
+    }
+
+    private var orderedEpisodeResults: [DanmakuEpisode] {
+        guard let currentEpisodeNumber else { return episodeResults }
+        let suggested = episodeResults.filter {
+            DanmakuService.episodeNumber(in: $0.title) == currentEpisodeNumber
+        }
+        let remaining = episodeResults.filter {
+            DanmakuService.episodeNumber(in: $0.title) != currentEpisodeNumber
+        }
+        return suggested + remaining
+    }
+
+    private func animeSubtitle(_ anime: DanmakuAnime) -> String {
+        var details = [anime.typeDescription, anime.startYear]
+        if let episodeCount = anime.episodeCount, episodeCount > 0 {
+            details.append("\(episodeCount) 集")
+        }
+        details = details.filter { !$0.isEmpty }
+        if let mismatch = typeMismatchLabel(for: anime) { details.append(mismatch) }
+        return details.isEmpty ? "选择作品后再确认集数" : details.joined(separator: " · ")
+    }
+
+    private func typeMismatchLabel(for anime: DanmakuAnime) -> String? {
+        let category = mediaCategory.lowercased()
+        let currentIsMovie = ["电影", "movie", "film"].contains { category.contains($0) }
+        let currentIsSeries = expectsEpisodeMatch || ["电视剧", "连续剧", "剧集", "番剧", "动漫", "动画", "series", "tv"]
+            .contains { category.contains($0) }
+        let type = anime.typeDescription.lowercased()
+        let resultIsMovie = ["电影", "剧场版", "movie", "film"].contains { type.contains($0) }
+        let resultIsSeries = ["电视剧", "连续剧", "剧集", "番剧", "动漫", "动画", "series", "tv"]
+            .contains { type.contains($0) }
+        if currentIsMovie && resultIsSeries { return "类型与当前条目不符" }
+        if currentIsSeries && resultIsMovie { return "类型与当前条目不符" }
+        return nil
     }
 
     private func resultButton(title: String, subtitle: String, icon: String, action: @escaping () -> Void) -> some View {
@@ -136,7 +211,7 @@ struct DanmakuSearchView: View {
                     .background(Color.tvboxCyan.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(.white).lineLimit(2)
-                    Text(subtitle).font(.system(size: 11)).foregroundStyle(Color.tvboxMuted).lineLimit(1)
+                    Text(subtitle).font(.system(size: 11)).foregroundStyle(Color.tvboxMuted).lineLimit(2)
                 }
                 Spacer(minLength: 8)
                 Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(Color.tvboxMuted)
@@ -156,6 +231,7 @@ struct DanmakuSearchView: View {
         message = "正在搜索作品…"
         selectedAnime = nil
         episodeResults = []
+        suggestedEpisodeIDs = []
         do {
             let results = try await service.searchAnime(keyword: keyword, apiAddress: apiAddress)
             guard generation == requestGeneration else { return }
@@ -179,7 +255,19 @@ struct DanmakuSearchView: View {
             guard generation == requestGeneration else { return }
             selectedAnime = anime
             episodeResults = results
-            message = results.isEmpty ? "此作品没有可选集数。" : "选择要加载弹幕的集数。"
+            if let currentEpisodeNumber {
+                suggestedEpisodeIDs = Set(results.filter {
+                    DanmakuService.episodeNumber(in: $0.title) == currentEpisodeNumber
+                }.map(\.id))
+                message = results.isEmpty
+                    ? "此作品没有可选集数。"
+                    : (suggestedEpisodeIDs.isEmpty
+                        ? "当前播放为第 \(currentEpisodeNumber) 集，但作品列表没有同集数候选；请手动确认。"
+                        : "已将第 \(currentEpisodeNumber) 集候选置顶。加载前请核对作品和集数。")
+            } else {
+                suggestedEpisodeIDs = []
+                message = results.isEmpty ? "此作品没有可选集数。" : "请核对作品信息后，选择对应集数。"
+            }
         } catch {
             guard generation == requestGeneration else { return }
             message = error.localizedDescription
@@ -191,11 +279,13 @@ struct DanmakuSearchView: View {
     private func loadComments(for episode: DanmakuEpisode) async {
         let generation = nextGeneration()
         isLoading = true
-        message = "正在下载《\(episode.title)》的弹幕…"
+        let animeTitle = selectedAnime?.title ?? "已选作品"
+        let matchTitle = "\(animeTitle) · \(episode.title)"
+        message = "正在下载《\(animeTitle)》\(episode.title)的弹幕…"
         do {
             let comments = try await service.comments(for: episode, apiAddress: apiAddress)
             guard generation == requestGeneration else { return }
-            onLoad(comments, episode.title)
+            onLoad(comments, matchTitle)
             dismiss()
         } catch {
             guard generation == requestGeneration else { return }

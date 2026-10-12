@@ -28,13 +28,13 @@ jobs:
             sdk: iphoneos
             products_directory: Release-iphoneos
             app_name: TVBox-iOS.app
-            ipa_name: TVBox-iOS-0.2.3-5-unsigned.ipa
+            ipa_name: TVBox-iOS-0.2.4-6-unsigned.ipa
           - scheme: TVBox-tvOS
             destination: generic/platform=tvOS
             sdk: appletvos
             products_directory: Release-appletvos
             app_name: TVBox-tvOS.app
-            ipa_name: TVBox-tvOS-0.2.3-5-unsigned.ipa
+            ipa_name: TVBox-tvOS-0.2.4-6-unsigned.ipa
 
     steps:
       - name: Check out source

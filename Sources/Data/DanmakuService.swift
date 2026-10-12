@@ -44,6 +44,9 @@ struct DanmakuAnime: Identifiable, Hashable {
     let id: String
     let title: String
     let searchTitle: String
+    let typeDescription: String
+    let startYear: String
+    let episodeCount: Int?
 }
 
 struct DanmakuEpisode: Identifiable, Hashable {
@@ -77,6 +80,31 @@ enum DanmakuServiceError: LocalizedError {
 }
 
 struct DanmakuService {
+    static func episodeNumber(in title: String) -> Int? {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.count <= 3, let number = Int(trimmed), number > 0 { return number }
+
+        let patterns = [
+            #"(?i)\bS\d{1,2}\s*E(?:P)?0*(\d{1,3})\b"#,
+            #"(?i)\b(?:EP?|Episode)\s*0*(\d{1,3})\b"#,
+            #"第\s*([0-9]{1,3})\s*[集话話期回]"#
+        ]
+        let titleRange = NSRange(title.startIndex..<title.endIndex, in: title)
+        for pattern in patterns {
+            guard let expression = try? NSRegularExpression(pattern: pattern),
+                  let match = expression.firstMatch(in: title, range: titleRange),
+                  let range = Range(match.range(at: 1), in: title),
+                  let number = Int(title[range]), number > 0 else { continue }
+            return number
+        }
+
+        let chinesePattern = #"第\s*([零〇一二两三四五六七八九十百]+)\s*[集话話期回]"#
+        guard let expression = try? NSRegularExpression(pattern: chinesePattern),
+              let match = expression.firstMatch(in: title, range: titleRange),
+              let range = Range(match.range(at: 1), in: title) else { return nil }
+        return Self.chineseEpisodeNumber(String(title[range]))
+    }
+
     func searchAnime(keyword: String, apiAddress: String) async throws -> [DanmakuAnime] {
         let data = try await request(path: ["search", "anime"], query: [URLQueryItem(name: "keyword", value: keyword)], apiAddress: apiAddress)
         let root = try jsonObject(data)
@@ -86,13 +114,7 @@ struct DanmakuService {
             let id = value(record, keys: ["animeId", "bangumiId", "id"])
             let originalTitle = value(record, keys: ["animeTitle", "title", "name"])
             guard !id.isEmpty, !originalTitle.isEmpty else { return nil }
-            var title = originalTitle
-            let year = value(record, keys: ["startDate"])
-            if year.count >= 4 {
-                let yearText = String(year.prefix(4))
-                if !title.contains(yearText) { title += " (\(yearText))" }
-            }
-            return DanmakuAnime(id: id, title: title, searchTitle: originalTitle)
+            return makeAnime(id: id, title: originalTitle, record: record)
         }
     }
 
@@ -116,11 +138,33 @@ struct DanmakuService {
         let search = try jsonObject(searchData)
         try checkAPIError(search)
         let candidates = search["animes"] as? [[String: Any]] ?? []
-        guard let match = candidates.first(where: {
+        let exactTitleMatches = candidates.filter {
             value($0, keys: ["animeTitle", "title", "name"]).trimmingCharacters(in: .whitespacesAndNewlines)
                 .localizedCaseInsensitiveCompare(anime.searchTitle.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
-        }) else { return [] }
-        return readEpisodes(match)
+        }
+        let exactIDMatches = exactTitleMatches.filter {
+            value($0, keys: ["animeId", "bangumiId", "id"]) == anime.id
+        }
+        if exactIDMatches.count == 1 { return readEpisodes(exactIDMatches[0]) }
+
+        let compatibleUnidentifiedMatches = exactTitleMatches.filter { record in
+            guard value(record, keys: ["animeId", "bangumiId", "id"]).isEmpty else { return false }
+            let candidateDate = value(record, keys: ["startDate", "airDate"])
+            let candidateYear = candidateDate.count >= 4 ? String(candidateDate.prefix(4)) : ""
+            let candidateType = value(record, keys: ["typeDescription", "animeTypeDescription", "typeName"])
+            let yearConflicts = !anime.startYear.isEmpty && !candidateYear.isEmpty && candidateYear != anime.startYear
+            let typeConflicts = !anime.typeDescription.isEmpty && !candidateType.isEmpty
+                && candidateType.localizedCaseInsensitiveCompare(anime.typeDescription) != .orderedSame
+            return !yearConflicts && !typeConflicts
+        }
+        guard compatibleUnidentifiedMatches.count == 1 else {
+            if compatibleUnidentifiedMatches.isEmpty, exactTitleMatches.isEmpty { return [] }
+            if compatibleUnidentifiedMatches.isEmpty {
+                throw DanmakuServiceError.api("弹幕源没有返回与所选作品 ID、年份或类型一致的集数；为避免加载同名作品的弹幕，已停止匹配。")
+            }
+            throw DanmakuServiceError.api("弹幕源返回了多个无法区分的同名作品，无法确认当前选中的作品。请检查弹幕 API 或选择另一条结果。")
+        }
+        return readEpisodes(compatibleUnidentifiedMatches[0])
     }
 
     func comments(for episode: DanmakuEpisode, apiAddress: String) async throws -> [DanmakuComment] {
@@ -208,6 +252,45 @@ struct DanmakuService {
             guard !id.isEmpty, !title.isEmpty else { return nil }
             return DanmakuEpisode(id: id, title: title)
         }
+    }
+
+    private func makeAnime(id: String, title: String, record: [String: Any]) -> DanmakuAnime {
+        let rawType = value(record, keys: ["typeDescription", "animeTypeDescription", "typeName"])
+        let yearValue = value(record, keys: ["startDate", "airDate"])
+        let year = yearValue.count >= 4 ? String(yearValue.prefix(4)) : ""
+        let rawEpisodeCount = value(record, keys: ["episodeCount", "episodesCount", "episodeNumber"])
+        return DanmakuAnime(
+            id: id,
+            title: title,
+            searchTitle: title,
+            typeDescription: rawType,
+            startYear: year,
+            episodeCount: Int(rawEpisodeCount)
+        )
+    }
+
+    private static func chineseEpisodeNumber(_ value: String) -> Int? {
+        let digits: [Character: Int] = [
+            "零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+            "五": 5, "六": 6, "七": 7, "八": 8, "九": 9
+        ]
+        var section = 0
+        var pendingDigit = 0
+        for character in value {
+            if let digit = digits[character] {
+                pendingDigit = digit
+            } else if character == "十" {
+                section += (pendingDigit == 0 ? 1 : pendingDigit) * 10
+                pendingDigit = 0
+            } else if character == "百" {
+                section += (pendingDigit == 0 ? 1 : pendingDigit) * 100
+                pendingDigit = 0
+            } else {
+                return nil
+            }
+        }
+        let number = section + pendingDigit
+        return number > 0 ? number : nil
     }
 
     private func value(_ object: [String: Any], keys: [String]) -> String {

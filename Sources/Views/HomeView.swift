@@ -46,62 +46,81 @@ struct HomeView: View {
                         .ignoresSafeArea()
                         .accessibilityHidden(true)
                     }
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: wide ? 28 : 20) {
+                    VStack(spacing: 0) {
+                        #if os(tvOS)
+                        VStack(alignment: .leading, spacing: 18) {
                             header(wide: wide)
                             sectionPicker(wide: wide)
-
-                            if section == .video, searchText.isEmpty, !catalog.recentSearches.isEmpty {
-                                searchHistorySection
-                            }
-
-                            if section == .video {
-                                if !catalog.categories.isEmpty { categoryPicker(wide: wide) }
-                                if catalog.selectedSite?.filterable == true,
-                                   let category = catalog.selectedCategory,
-                                   !category.filters.isEmpty {
-                                    filterPicker(category: category)
-                                }
-                                if !catalog.historyItems.isEmpty { recentSection(wide: wide) }
-                                if wide, catalog.selectedCategoryID.isEmpty, searchText.isEmpty,
-                                   let featured = currentItems.first {
-                                    NavigationLink(value: featured) { featuredCard(featured, wide: wide) }
-                                        .buttonStyle(FocusAwareButtonStyle())
-                                }
-                            }
-
-                            if section == .live {
-                                liveContent(wide: wide)
-                            } else if !currentItems.isEmpty {
-                                contentGrid(currentItems, wide: wide)
-                            } else if !catalog.isLoading && section != .live {
-                                emptyState
-                            }
-
-                            if catalog.isLoading {
-                                HStack { ProgressView().tint(.white); Text("正在载入…").foregroundStyle(Color.tvboxMuted) }
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 20)
-                            }
-                            if let message = catalog.loadMessage {
-                                Text(message)
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(Color.tvboxMuted)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            footer
                         }
-                        .frame(maxWidth: 1500)
+                        .frame(maxWidth: 1500, alignment: .leading)
                         .padding(.horizontal, wide ? 72 : 20)
                         .padding(.top, wide ? 28 : 18)
-                        .padding(.bottom, 48)
+                        .padding(.bottom, 8)
                         .frame(maxWidth: .infinity)
+                        #endif
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: wide ? 28 : 20) {
+                                #if os(iOS)
+                                header(wide: wide)
+                                #endif
+
+                                if section == .video, searchText.isEmpty, !catalog.recentSearches.isEmpty {
+                                    searchHistorySection
+                                }
+
+                                if section == .video {
+                                    if !catalog.categories.isEmpty { categoryPicker(wide: wide) }
+                                    if catalog.selectedSite?.filterable == true,
+                                       let category = catalog.selectedCategory,
+                                       !category.filters.isEmpty {
+                                        filterPicker(category: category)
+                                    }
+                                    if !catalog.historyItems.isEmpty { recentSection(wide: wide) }
+                                    if wide, catalog.selectedCategoryID.isEmpty, searchText.isEmpty,
+                                       let featured = currentItems.first {
+                                        NavigationLink(value: featured) { featuredCard(featured, wide: wide) }
+                                            .buttonStyle(FocusAwareButtonStyle())
+                                    }
+                                }
+
+                                if section == .live {
+                                    liveContent(wide: wide)
+                                } else if !currentItems.isEmpty {
+                                    contentGrid(currentItems, wide: wide)
+                                } else if !catalog.isLoading && section != .live {
+                                    emptyState
+                                }
+
+                                if catalog.isLoading {
+                                    HStack { ProgressView().tint(.white); Text("正在载入…").foregroundStyle(Color.tvboxMuted) }
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 20)
+                                }
+                                if let message = catalog.loadMessage {
+                                    Text(message)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundStyle(Color.tvboxMuted)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                footer
+                            }
+                            .frame(maxWidth: 1500)
+                            .padding(.horizontal, wide ? 72 : 20)
+                            .padding(.top, wide ? 28 : 18)
+                            .padding(.bottom, 48)
+                            .frame(maxWidth: .infinity)
+                        }
                     }
                 }
                 .navigationDestination(for: MediaItem.self) { item in
                     DetailView(item: item)
                 }
                 .toolbar(.hidden, for: .navigationBar)
+                #if os(iOS)
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    sectionNavigationBar
+                }
+                #endif
             }
             .tint(.white)
             #if os(tvOS)
@@ -132,7 +151,7 @@ struct HomeView: View {
                         Button("节目单") { epgChannel = channel; activeLiveChannel = nil }
                     }
                     ForEach(channel.sources) { source in
-                        Button("\(source.name) · \(source.address)") { playLive(channel: channel, source: source); activeLiveChannel = nil }
+                        Button(source.name) { playLive(channel: channel, source: source); activeLiveChannel = nil }
                     }
                 }
             }
@@ -208,15 +227,12 @@ struct HomeView: View {
                     .font(.system(size: 22, weight: .bold))
                     .foregroundStyle(.white)
             }
-            VStack(alignment: .leading, spacing: 2) {
-                Text("TVBOX")
-                    .font(.system(size: 11, weight: .heavy, design: .rounded))
-                    .tracking(2.2)
-                    .foregroundStyle(Color.tvboxCyan)
-                Text("观影空间")
-                    .font(.system(size: 21, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-            }
+            Text(catalog.selectedSite?.name ?? "选择片源")
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 180, alignment: .leading)
         }
         .accessibilityElement(children: .combine)
     }
@@ -226,7 +242,7 @@ struct HomeView: View {
             if let configuration = catalog.configuration {
                 #if os(tvOS)
                 Button { showingSiteChoices = true } label: {
-                    Label(catalog.selectedSite?.name ?? "选择片源", systemImage: "rectangle.stack")
+                    Label("切换片源", systemImage: "rectangle.stack")
                         .font(.system(size: 13, weight: .semibold))
                         .lineLimit(1)
                         .padding(.horizontal, 14)
@@ -249,7 +265,7 @@ struct HomeView: View {
                         }
                     }
                 } label: {
-                    Label(catalog.selectedSite?.name ?? "选择片源", systemImage: "rectangle.stack")
+                    Label("切换片源", systemImage: "rectangle.stack")
                         .font(.system(size: 13, weight: .semibold))
                         .lineLimit(1)
                         .padding(.horizontal, 14)
@@ -363,6 +379,48 @@ struct HomeView: View {
             }
         }
     }
+
+    #if os(iOS)
+    private var sectionNavigationBar: some View {
+        HStack(spacing: 4) {
+            ForEach(HomeSection.allCases) { value in
+                Button {
+                    section = value
+                    if value == .video { searchText = ""; catalog.selectCategory("") }
+                } label: {
+                    VStack(spacing: 5) {
+                        Image(systemName: sectionSymbol(for: value))
+                            .font(.system(size: 18, weight: section == value ? .semibold : .regular))
+                        Text(value.rawValue)
+                            .font(.system(size: 11, weight: section == value ? .semibold : .medium))
+                    }
+                    .foregroundStyle(section == value ? Color.tvboxAccent : Color.tvboxMuted)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 52)
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(value.rawValue)
+                .accessibilityAddTraits(section == value ? .isSelected : [])
+            }
+        }
+        .padding(7)
+        .background(.black.opacity(0.14), in: Capsule())
+        .glassEffect(.regular.interactive(), in: Capsule())
+        .padding(.horizontal, 18)
+        .padding(.top, 7)
+        .padding(.bottom, 5)
+    }
+
+    private func sectionSymbol(for value: HomeSection) -> String {
+        switch value {
+        case .video: return "play.rectangle.on.rectangle"
+        case .live: return "dot.radiowaves.left.and.right"
+        case .favorites: return "heart"
+        case .history: return "clock.arrow.circlepath"
+        }
+    }
+    #endif
 
     private func categoryPicker(wide: Bool) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -592,7 +650,7 @@ struct HomeView: View {
                 Button("节目单 · \(channel.name)") { epgChannel = channel }
             }
             ForEach(channel.sources) { source in
-                Button("\(source.name)  ·  \(source.address)") {
+                Button(source.name) {
                     playLive(channel: channel, source: source)
                 }
             }
