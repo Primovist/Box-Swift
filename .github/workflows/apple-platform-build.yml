@@ -1,0 +1,66 @@
+name: Apple platform builds
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apple-platform-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ matrix.scheme }}
+    runs-on: macos-26
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scheme: TVBox-iOS
+            destination: generic/platform=iOS Simulator
+            products_directory: Release-iphonesimulator
+            app_name: TVBox-iOS.app
+          - scheme: TVBox-tvOS
+            destination: generic/platform=tvOS Simulator
+            products_directory: Release-appletvsimulator
+            app_name: TVBox-tvOS.app
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Resolve Swift packages
+        run: >-
+          xcodebuild
+          -resolvePackageDependencies
+          -project TVBoxSwift.xcodeproj
+          -scheme "${{ matrix.scheme }}"
+
+      - name: Build ${{ matrix.scheme }}
+        run: >-
+          xcodebuild
+          -project TVBoxSwift.xcodeproj
+          -scheme "${{ matrix.scheme }}"
+          -configuration Release
+          -destination "${{ matrix.destination }}"
+          -derivedDataPath "$RUNNER_TEMP/DerivedData"
+          CODE_SIGNING_ALLOWED=NO
+          build
+
+      - name: Upload app bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.scheme }}-${{ github.sha }}
+          path: ${{ runner.temp }}/DerivedData/Build/Products/${{ matrix.products_directory }}/${{ matrix.app_name }}
+          if-no-files-found: error
+          retention-days: 7
