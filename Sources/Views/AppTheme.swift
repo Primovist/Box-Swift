@@ -69,3 +69,49 @@ extension Color {
     static var tvboxAccent: Color { TVBoxPalette.accent }
     static var tvboxCyan: Color { TVBoxPalette.cyan }
 }
+
+#if os(iOS)
+struct EdgeSwipeBackModifier: ViewModifier {
+    @Environment(\.dismiss) private var dismiss
+    @State private var dragOffset: CGFloat = 0
+    let width: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .offset(x: dragOffset)
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 10, coordinateSpace: .local)
+                    .onChanged { value in
+                        guard value.startLocation.x <= 28,
+                              value.translation.width > 0,
+                              value.translation.width > abs(value.translation.height) else { return }
+                        dragOffset = min(width, value.translation.width)
+                    }
+                    .onEnded { value in
+                        let isEdgeSwipe = value.startLocation.x <= 28
+                            && value.translation.width > 0
+                            && value.translation.width > abs(value.translation.height)
+                        guard isEdgeSwipe else {
+                            dragOffset = 0
+                            return
+                        }
+
+                        if value.translation.width > width * 0.30 || value.predictedEndTranslation.width > width * 0.42 {
+                            withAnimation(.easeOut(duration: 0.18)) { dragOffset = width }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { dismiss() }
+                        } else {
+                            withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.88)) {
+                                dragOffset = 0
+                            }
+                        }
+                    }
+            )
+    }
+}
+
+extension View {
+    func edgeSwipeBack(width: CGFloat) -> some View {
+        modifier(EdgeSwipeBackModifier(width: width))
+    }
+}
+#endif

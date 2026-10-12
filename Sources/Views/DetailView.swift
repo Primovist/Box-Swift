@@ -44,6 +44,9 @@ struct DetailView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
+            #if os(iOS)
+            .edgeSwipeBack(width: geometry.size.width)
+            #endif
         }
         .task(id: item.id) {
             let loaded = await catalog.detail(for: item)

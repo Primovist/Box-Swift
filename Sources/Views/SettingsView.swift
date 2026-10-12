@@ -55,6 +55,9 @@ struct SettingsView: View {
                 endpoint = catalog.sourceURL
                 Task { posterCacheSize = await PosterImageCache.cachedSize() }
             }
+            #if os(iOS)
+            .edgeSwipeBack(width: geometry.size.width)
+            #endif
         }
         .fullScreenCover(item: $playbackRequest) { request in
             PlayerScreen(request: request)
