@@ -75,7 +75,7 @@ struct HomeView: View {
             if newValue == .live { catalog.loadLive() }
             if newValue == .video {
                 searchText = ""
-                catalog.selectCategory("")
+                catalog.restoreVideoCatalog()
             }
         }
         .onChange(of: catalog.selectedSiteKey) { _, _ in
@@ -183,6 +183,12 @@ struct HomeView: View {
             .frame(maxWidth: .infinity)
         }
         .id(selectedSection)
+        #if os(iOS)
+        .refreshable {
+            guard selectedSection == .video else { return }
+            await catalog.refreshSelectedSite()
+        }
+        #endif
         #if os(tvOS)
         .scrollBounceBehavior(.basedOnSize)
         #endif

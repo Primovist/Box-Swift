@@ -1567,7 +1567,7 @@ struct PlayerScreen: View {
             orientationBeforeManualChange = scene.interfaceOrientation
             orientationScene = scene
         }
-        let requested: UIInterfaceOrientationMask = scene.interfaceOrientation.isLandscape ? .portrait : .landscape
+        let requested: UIInterfaceOrientationMask = scene.interfaceOrientation.isLandscape ? .portrait : .landscapeRight
         scene.requestGeometryUpdate(.iOS(interfaceOrientations: requested)) { _ in }
     }
 
@@ -1578,10 +1578,14 @@ struct PlayerScreen: View {
         defer { orientationScene = nil }
         let mask: UIInterfaceOrientationMask
         switch orientationBeforeManualChange {
-        case .portrait, .portraitUpsideDown:
+        case .portrait:
             mask = .portrait
-        case .landscapeLeft, .landscapeRight:
-            mask = .landscape
+        case .portraitUpsideDown:
+            mask = .portraitUpsideDown
+        case .landscapeLeft:
+            mask = .landscapeLeft
+        case .landscapeRight:
+            mask = .landscapeRight
         default:
             return
         }

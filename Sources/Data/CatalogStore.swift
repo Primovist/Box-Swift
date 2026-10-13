@@ -2,6 +2,18 @@ import Foundation
 import Combine
 import CryptoKit
 
+private struct VideoCatalogSnapshot: Codable {
+    let sourceURL: String
+    let siteKey: String
+    let categories: [TVBoxCategory]
+    let selectedCategoryID: String
+    let selectedFilters: [String: String]
+    let items: [MediaItem]
+    let currentPage: Int
+    let pageCount: Int
+    let canLoadMore: Bool
+}
+
 @MainActor
 final class CatalogStore: ObservableObject {
     @Published private(set) var items = SampleCatalog.items
@@ -41,6 +53,7 @@ final class CatalogStore: ObservableObject {
     private var globalSearchSites: [TVBoxSite] = []
     private var globalSearchPageBySite: [String: Int] = [:]
     private var globalSearchPageCountBySite: [String: Int] = [:]
+    private var videoSnapshot: VideoCatalogSnapshot?
 
     var selectedSite: TVBoxSite? {
         availableSites.first { $0.key == selectedSiteKey } ?? availableSites.first
@@ -249,6 +262,61 @@ final class CatalogStore: ObservableObject {
         Task { await loadConfiguration(from: sourceURL) }
     }
 
+    func restoreVideoCatalog() {
+        guard !selectedSiteKey.isEmpty else { return }
+        if !isSearching, searchQuery.isEmpty, isLoading {
+            return
+        }
+        if isSearching || !searchQuery.isEmpty {
+            contentTask?.cancel()
+            requestGeneration += 1
+            isLoading = false
+        }
+        isSearching = false
+        isSearchingAllSites = false
+        searchQuery = ""
+        globalSearchResults = []
+        globalSearchSites = []
+        globalSearchPageBySite = [:]
+        globalSearchPageCountBySite = [:]
+
+        let cached = videoSnapshot?.sourceURL == sourceURL && videoSnapshot?.siteKey == selectedSiteKey
+            ? videoSnapshot
+            : Self.decode(VideoCatalogSnapshot.self, key: Self.videoCatalogKey(for: sourceURL, siteKey: selectedSiteKey))
+        guard let cached, cached.siteKey == selectedSiteKey else {
+            items = []
+            canLoadMore = false
+            loadMessage = nil
+            guard selectedSite != nil else { return }
+            contentTask?.cancel()
+            requestGeneration += 1
+            let generation = requestGeneration
+            isLoading = true
+            contentTask = Task { [weak self] in
+                await self?.loadSiteData(generation: generation)
+            }
+            return
+        }
+        applyVideoSnapshot(cached)
+        loadMessage = nil
+    }
+
+    func refreshSelectedSite() async {
+        guard selectedSite != nil, !sourceURL.isEmpty else { return }
+        isSearching = false
+        isSearchingAllSites = false
+        searchQuery = ""
+        globalSearchResults = []
+        globalSearchSites = []
+        globalSearchPageBySite = [:]
+        globalSearchPageCountBySite = [:]
+        contentTask?.cancel()
+        requestGeneration += 1
+        let generation = requestGeneration
+        isLoading = true
+        await loadSiteData(generation: generation)
+    }
+
     func loadConfiguration(from address: String, restoreRemovedSites: Bool = false) async {
         let previousAddress = UserDefaults.standard.string(forKey: "tvbox.sourceURL") ?? ""
         let requestAddress = address.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -326,9 +394,17 @@ final class CatalogStore: ObservableObject {
         UserDefaults.standard.set(key, forKey: "tvbox.selectedSite")
         UserDefaults.standard.set(key, forKey: Self.siteKey(for: sourceURL))
         searchQuery = ""
+        isSearching = false
         isSearchingAllSites = false
         globalSearchResults = []
+        globalSearchSites = []
+        globalSearchPageBySite = [:]
+        globalSearchPageCountBySite = [:]
         selectedFilters = [:]
+        videoSnapshot = nil
+        categories = []
+        selectedCategoryID = ""
+        items = []
         requestGeneration += 1
         let generation = requestGeneration
         contentTask?.cancel()
@@ -550,6 +626,7 @@ final class CatalogStore: ObservableObject {
         selectParser("")
         configuration = nil
         categories = []
+        videoSnapshot = nil
         selectedCategoryID = ""
         liveGroups = []
         hasLoadedLive = false
@@ -578,6 +655,18 @@ final class CatalogStore: ObservableObject {
             isLoading = false
             return
         }
+        let decodedSnapshot = Self.decode(
+            VideoCatalogSnapshot.self,
+            key: Self.videoCatalogKey(for: sourceURL, siteKey: site.key)
+        )
+        let cachedSnapshot = decodedSnapshot?.sourceURL == sourceURL && decodedSnapshot?.siteKey == site.key
+            ? decodedSnapshot
+            : nil
+        let preferredCategoryID = cachedSnapshot?.selectedCategoryID
+        let preferredFilters = cachedSnapshot?.selectedFilters ?? [:]
+        if let cachedSnapshot {
+            applyVideoSnapshot(cachedSnapshot)
+        }
         do {
             let response = try await service.loadCategories(for: site)
             guard !Task.isCancelled, generation == requestGeneration else { return }
@@ -600,18 +689,29 @@ final class CatalogStore: ObservableObject {
             var siteCategories = response.categories
             siteCategories.removeAll(where: isAllCategory)
             categories = [all] + siteCategories
-            selectedCategoryID = all.id
+            let defaultCategoryID: String
+            if !response.featuredItems.isEmpty {
+                defaultCategoryID = all.id
+            } else {
+                defaultCategoryID = remoteAllIndex.map { response.categories[$0].id }
+                    ?? response.categories.first?.id
+                    ?? all.id
+            }
+            let requestedCategoryID = preferredCategoryID ?? defaultCategoryID
+            let requestedCategoryExists = categories.contains(where: { $0.id == requestedCategoryID })
+            selectedCategoryID = requestedCategoryExists ? requestedCategoryID : all.id
+            selectedFilters = preferredCategoryID != nil && requestedCategoryExists ? preferredFilters : [:]
             currentPage = 1
             pageCount = 1
-            if !response.featuredItems.isEmpty {
+            if selectedCategoryID == all.id, selectedFilters.isEmpty, !response.featuredItems.isEmpty {
                 items = scoped(response.featuredItems)
                 canLoadMore = false
-            } else if let initialCategory = remoteAllIndex.map({ response.categories[$0] }) ?? response.categories.first {
-                selectedCategoryID = initialCategory.id
+            } else if let initialCategory = categories.first(where: { $0.id == selectedCategoryID }) {
                 let page = try await service.loadPage(
                     for: site,
                     category: initialCategory.id.isEmpty ? nil : initialCategory,
-                    page: 1
+                    page: 1,
+                    filters: selectedFilters
                 )
                 guard !Task.isCancelled, generation == requestGeneration else { return }
                 items = scoped(page.items)
@@ -624,11 +724,16 @@ final class CatalogStore: ObservableObject {
             }
             isSearching = false
             isSearchingAllSites = false
-            loadMessage = "\(site.name)：\(items.count) 个条目。"
+            saveVideoSnapshot()
+            loadMessage = nil
         } catch {
             guard generation == requestGeneration else { return }
-            items = []
             loadMessage = error.localizedDescription
+            if let cachedSnapshot {
+                applyVideoSnapshot(cachedSnapshot)
+            } else {
+                items = []
+            }
         }
         if generation == requestGeneration { isLoading = false }
     }
@@ -661,7 +766,8 @@ final class CatalogStore: ObservableObject {
                 currentPage = requestedPage
                 pageCount = result.pageCount
                 canLoadMore = requestedPage < result.pageCount && !result.items.isEmpty
-                loadMessage = "\(site.name)：\(items.count) 个条目。"
+                saveVideoSnapshot()
+                loadMessage = nil
             } catch {
                 guard generation == requestGeneration else { return }
                 if reset { items = [] }
@@ -794,6 +900,38 @@ final class CatalogStore: ObservableObject {
         items.map { $0.withSourceConfigurationURL(sourceURL) }
     }
 
+    private func applyVideoSnapshot(_ snapshot: VideoCatalogSnapshot) {
+        guard snapshot.sourceURL == sourceURL, snapshot.siteKey == selectedSiteKey else { return }
+        videoSnapshot = snapshot
+        categories = snapshot.categories
+        selectedCategoryID = snapshot.selectedCategoryID
+        selectedFilters = snapshot.selectedFilters
+        items = snapshot.items
+        currentPage = snapshot.currentPage
+        pageCount = snapshot.pageCount
+        canLoadMore = snapshot.canLoadMore
+        isSearching = false
+        isSearchingAllSites = false
+    }
+
+    private func saveVideoSnapshot() {
+        guard let site = selectedSite, !isSearching, !isSearchingAllSites else { return }
+        let snapshot = VideoCatalogSnapshot(
+            sourceURL: sourceURL,
+            siteKey: site.key,
+            categories: categories,
+            selectedCategoryID: selectedCategoryID,
+            selectedFilters: selectedFilters,
+            items: items,
+            currentPage: currentPage,
+            pageCount: pageCount,
+            canLoadMore: canLoadMore
+        )
+        videoSnapshot = snapshot
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        UserDefaults.standard.set(data, forKey: Self.videoCatalogKey(for: sourceURL, siteKey: site.key))
+    }
+
     private func selectConfiguration(for item: MediaItem) async -> Bool {
         guard let address = item.sourceConfigurationURL,
               !address.isEmpty else { return true }
@@ -817,6 +955,10 @@ final class CatalogStore: ObservableObject {
 
     private static func siteKey(for address: String) -> String {
         "tvbox.selectedSite.\(storageSuffix(for: address))"
+    }
+
+    private static func videoCatalogKey(for address: String, siteKey: String) -> String {
+        "tvbox.cachedVideoCatalog.\(storageSuffix(for: address + "|" + siteKey))"
     }
 
     private static func removedSitesKey(for address: String) -> String {

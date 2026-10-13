@@ -124,14 +124,14 @@ struct TVBoxParser: Identifiable, Hashable {
     }
 }
 
-struct TVBoxCategory: Identifiable, Hashable {
+struct TVBoxCategory: Identifiable, Hashable, Codable {
     let id: String
     let name: String
     let flag: String
     var filters: [TVBoxFilter]
 }
 
-struct TVBoxFilter: Identifiable, Hashable {
+struct TVBoxFilter: Identifiable, Hashable, Codable {
     let key: String
     let name: String
     let options: [TVBoxFilterOption]
@@ -139,7 +139,7 @@ struct TVBoxFilter: Identifiable, Hashable {
     var id: String { key }
 }
 
-struct TVBoxFilterOption: Identifiable, Hashable {
+struct TVBoxFilterOption: Identifiable, Hashable, Codable {
     let title: String
     let value: String
 
