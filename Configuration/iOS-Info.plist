@@ -24,6 +24,10 @@
         <string>UIInterfaceOrientationLandscapeRight</string>
     </array>
     <key>UILaunchScreen</key><dict/>
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>audio</string>
+    </array>
     <key>NSLocalNetworkUsageDescription</key><string>用于访问你配置的局域网视频目录和媒体流。</string>
     <key>NSAppTransportSecurity</key>
     <dict>

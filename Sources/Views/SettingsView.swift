@@ -10,23 +10,30 @@ struct SettingsView: View {
     @State private var isConfirmingRestore = false
     @State private var isConfirmingCacheClear = false
 
+    private var liveChannelCountText: String {
+        if catalog.isLoadingLive { return "载入中…" }
+        guard catalog.hasLoadedLive || catalog.configuration?.liveURLs.isEmpty == true else {
+            return "未载入"
+        }
+        return "\(catalog.liveGroups.reduce(0) { $0 + $1.channels.count })"
+    }
+
     var body: some View {
         Form {
             Section {
-                Text("支持标准 XML API、JSON API 和 type=4 HTTP API 站点。配置中的 Spider（type=3）会跳过。")
-                    .foregroundStyle(.secondary)
-
                 urlField("https://example.com/tvbox.json", text: $endpoint)
 
                 Button {
                     Task { await catalog.loadConfiguration(from: endpoint, restoreRemovedSites: true) }
                 } label: {
-                    if catalog.isLoading {
-                        ProgressView()
-                            .frame(maxWidth: .infinity)
-                    } else {
-                        Label("载入配置", systemImage: "arrow.down.circle")
-                            .frame(maxWidth: .infinity)
+                    HStack {
+                        Spacer(minLength: 0)
+                        if catalog.isLoading {
+                            ProgressView()
+                        } else {
+                            Label("载入配置", systemImage: "arrow.down.circle")
+                        }
+                        Spacer(minLength: 0)
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -36,7 +43,7 @@ struct SettingsView: View {
                     isConfirmingRestore = true
                 }
             } header: {
-                Label("片源配置", systemImage: "point.3.connected.trianglepath.dotted")
+                Text("片源配置")
             } footer: {
                 Text("支持顶层 sites 或 video.sites；站点 type 0、1、4。支持静态网页媒体地址提取和 JSON 解析器。动态网页嗅探、Spider（type 3）不执行。")
             }
@@ -55,17 +62,13 @@ struct SettingsView: View {
                     Button(role: .destructive) {
                         catalog.removeSelectedSite()
                     } label: {
-                        HStack {
-                            Spacer(minLength: 0)
-                            Label("删除当前视频源", systemImage: "trash")
-                        }
+                        Label("删除当前视频源", systemImage: "trash")
                     }
-                    .buttonStyle(.borderless)
                     .disabled(catalog.selectedSite == nil)
 
                     LabeledContent("可用站点", value: "\(catalog.availableSites.count)")
-                    LabeledContent("解析器", value: "\(configuration.parsers.count)")
-                    LabeledContent("直播频道", value: "\(configuration.liveGroups.reduce(0) { $0 + $1.channels.count })")
+                    LabeledContent("可用解析器", value: "\(configuration.parsers.filter { [0, 1].contains($0.type) }.count)")
+                    LabeledContent("直播频道", value: liveChannelCountText)
                     if !configuration.epgURL.isEmpty {
                         Label("已配置节目单", systemImage: "checkmark.circle")
                             .foregroundStyle(.secondary)
@@ -73,7 +76,7 @@ struct SettingsView: View {
                 }
             }
 
-            if let loadMessage = catalog.loadMessage {
+            if let loadMessage = catalog.loadMessage, !loadMessage.contains("个条目") {
                 Section("配置状态") {
                     Text(loadMessage)
                         .foregroundStyle(loadMessage.localizedCaseInsensitiveContains("失败") || loadMessage.localizedCaseInsensitiveContains("没有") ? Color.orange : Color.secondary)
@@ -114,6 +117,11 @@ struct SettingsView: View {
         .onAppear {
             endpoint = catalog.sourceURL
             Task { imageCacheSize = await ArtworkImageCache.cachedSize() }
+            catalog.loadLive()
+        }
+        .onChange(of: catalog.configuration) { _, configuration in
+            guard configuration != nil else { return }
+            catalog.loadLive()
         }
         .onChange(of: catalog.sourceURL) { _, value in
             endpoint = value

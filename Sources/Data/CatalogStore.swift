@@ -24,8 +24,8 @@ final class CatalogStore: ObservableObject {
     @Published private(set) var savedSourceURLs: [String]
     @Published private(set) var liveGroups: [TVBoxLiveGroup] = []
     @Published private(set) var isLoadingLive = false
+    @Published private(set) var hasLoadedLive = false
     @Published private(set) var recentSearches: [String]
-    private var hasLoadedLive = false
 
     private let service = CatalogService()
     private var configurationTask: Task<Void, Never>?

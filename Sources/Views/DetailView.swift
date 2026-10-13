@@ -127,7 +127,7 @@ struct DetailView: View {
                     if !media.subtitle.isEmpty {
                         Text(media.subtitle).font(.system(size: 13, weight: .medium)).foregroundStyle(Color.tvboxCyan)
                     }
-                    actionButtons(compact: true)
+                    favoriteButton
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -160,7 +160,7 @@ struct DetailView: View {
                     .lineSpacing(5)
                     .lineLimit(5)
             }
-            actionButtons(compact: false)
+            favoriteButton
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 8)
@@ -184,44 +184,13 @@ struct DetailView: View {
         }
     }
 
-    @ViewBuilder
-    private func actionButtons(compact: Bool) -> some View {
-        if compact {
-            VStack(alignment: .leading, spacing: 9) {
-                actionButtonContent
-            }
-        } else {
-            HStack(spacing: 10) {
-                actionButtonContent
-            }
+    private var favoriteButton: some View {
+        Button {
+            catalog.toggleFavorite(media)
+        } label: {
+            Label(catalog.isFavorite(media) ? "已收藏" : "收藏", systemImage: catalog.isFavorite(media) ? "heart.fill" : "heart")
         }
-    }
-
-    @ViewBuilder
-    private var actionButtonContent: some View {
-            Button {
-                guard let episode = selectedLine?.episodes.first(where: { $0.id == preferredEpisodeID })
-                    ?? selectedLine?.episodes.first else {
-                    errorMessage = "这个条目暂时没有可播放线路。"
-                    return
-                }
-                play(episode)
-            } label: {
-                if isResolving {
-                    ProgressView().tint(.white).frame(minWidth: 44, minHeight: 44)
-                } else {
-                    Label("立即播放", systemImage: "play.fill")
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(isResolving || media.episodes.isEmpty)
-
-            Button {
-                catalog.toggleFavorite(media)
-            } label: {
-                Label(catalog.isFavorite(media) ? "已收藏" : "收藏", systemImage: catalog.isFavorite(media) ? "heart.fill" : "heart")
-            }
-            .buttonStyle(.bordered)
+        .buttonStyle(.bordered)
     }
 
     private func playlist(wide: Bool) -> some View {

@@ -383,6 +383,70 @@ struct PlaybackHistory: Identifiable, Hashable, Codable {
     var updatedAt: Date
 }
 
+struct LivePlaybackContext {
+    let groups: [TVBoxLiveGroup]
+    let groupID: String
+    let channelID: String
+    let sourceID: String
+    let epgURL: String
+    let headerRules: [TVBoxLiveHeaderRule]
+
+    var currentGroup: TVBoxLiveGroup? { groups.first { $0.id == groupID } }
+    var currentChannel: TVBoxLiveChannel? { currentGroup?.channels.first { $0.id == channelID } }
+    var currentSource: TVBoxLiveSource? { currentChannel?.sources.first { $0.id == sourceID } ?? currentChannel?.sources.first }
+
+    func headers(for address: String) -> [String: String] {
+        headerRules.first { rule in rule.flags.contains { address.localizedCaseInsensitiveContains($0) } }?.headers ?? [:]
+    }
+
+    func selecting(groupID: String, channelID: String, sourceID: String) -> LivePlaybackContext {
+        LivePlaybackContext(
+            groups: groups,
+            groupID: groupID,
+            channelID: channelID,
+            sourceID: sourceID,
+            epgURL: epgURL,
+            headerRules: headerRules
+        )
+    }
+
+    func request(groupID: String, channelID: String, sourceID: String, title: String? = nil, url overrideURL: URL? = nil, isLive: Bool = true) -> PlaybackRequest? {
+        guard let group = groups.first(where: { $0.id == groupID }),
+              let channel = group.channels.first(where: { $0.id == channelID }),
+              let source = channel.sources.first(where: { $0.id == sourceID }) ?? channel.sources.first,
+              let url = overrideURL ?? URL(string: source.address),
+              ["http", "https", "rtsp", "rtmp"].contains(url.scheme?.lowercased() ?? "") else { return nil }
+
+        let queue = groups.flatMap { value in
+            value.channels.compactMap { candidate -> Episode? in
+                guard let primarySource = candidate.sources.first(where: { source in
+                    guard let sourceURL = URL(string: source.address) else { return false }
+                    return ["http", "https", "rtsp", "rtmp"].contains(sourceURL.scheme?.lowercased() ?? "")
+                }) else { return nil }
+                return Episode(
+                    id: "live::\(value.id)::\(candidate.id)",
+                    title: "\(value.name) · \(candidate.name)",
+                    address: primarySource.address,
+                    flag: "直播",
+                    headers: primarySource.headers.merging(headers(for: primarySource.address)) { _, rule in rule }
+                )
+            }
+        }
+        let episodeID = "live::\(group.id)::\(channel.id)"
+        let queueIndex = queue.firstIndex(where: { $0.id == episodeID }) ?? 0
+        let selectedContext = selecting(groupID: group.id, channelID: channel.id, sourceID: source.id)
+        return PlaybackRequest(
+            title: title ?? "\(channel.name) · \(source.name)",
+            url: url,
+            headers: source.headers.merging(headers(for: source.address)) { _, rule in rule },
+            queue: queue,
+            queueIndex: queueIndex,
+            isLive: isLive,
+            liveContext: selectedContext
+        )
+    }
+}
+
 struct PlaybackRequest: Identifiable {
     let id = UUID()
     let title: String
@@ -400,6 +464,7 @@ struct PlaybackRequest: Identifiable {
     let availableLines: [PlaybackLine]
     let lineID: String?
     let danmakuSource: String?
+    let liveContext: LivePlaybackContext?
 
     init(
         title: String,
@@ -416,7 +481,8 @@ struct PlaybackRequest: Identifiable {
         skipOpeningMilliseconds: Int = 0,
         availableLines: [PlaybackLine] = [],
         lineID: String? = nil,
-        danmakuSource: String? = nil
+        danmakuSource: String? = nil,
+        liveContext: LivePlaybackContext? = nil
     ) {
         self.title = title
         self.url = url
@@ -433,6 +499,7 @@ struct PlaybackRequest: Identifiable {
         self.availableLines = availableLines
         self.lineID = lineID
         self.danmakuSource = danmakuSource
+        self.liveContext = liveContext
     }
 }
 

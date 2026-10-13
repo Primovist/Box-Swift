@@ -34,6 +34,13 @@ private enum PlayerTouchGesture: Equatable {
     case ignored
 }
 
+private enum LivePlayerPanel: String, Equatable, Identifiable {
+    case guide = "节目单"
+    case sources = "线路"
+
+    var id: String { rawValue }
+}
+
 #if os(iOS)
 @MainActor
 private final class SystemVolumeController: ObservableObject {
@@ -72,7 +79,7 @@ private struct SystemVolumeControl: UIViewRepresentable {
 #endif
 
 @MainActor
-final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelegate {
+final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelegate, VLCPictureInPictureMediaControlling {
     @Published private(set) var status = "准备连接"
     @Published private(set) var isPlaying = false
     @Published private(set) var playbackRequested = false
@@ -93,6 +100,10 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     @Published private(set) var danmakuClockRevision = 0
     @Published private(set) var didReachEnd = false
     @Published private(set) var aspectRatioLabel = "原始"
+#if os(iOS)
+    @Published private(set) var isPictureInPictureReady = false
+    @Published private(set) var isPictureInPictureActive = false
+#endif
 
     let player: VLCMediaPlayer
     private(set) var request: PlaybackRequest
@@ -115,6 +126,11 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     private var aspectRatio: String?
     private var ignoreNextStoppedEvent = false
     private var observedNearEnd = false
+#if os(iOS)
+    private weak var pictureInPictureController: VLCPictureInPictureWindowControlling?
+    private var pictureInPictureDrawableID: UUID?
+    private var pictureInPictureControllerID: ObjectIdentifier?
+#endif
 
     var isDanmakuClockAdvancing: Bool {
         isPlaying && !isDanmakuBuffering
@@ -133,6 +149,9 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         player = VLCMediaPlayer(options: ["--hw-dec"])
         super.init()
         player.delegate = self
+#if os(iOS)
+        configureAudioSession()
+#endif
         player.media = makeMedia()
         parseMediaIfNeeded()
         refreshProgress()
@@ -293,6 +312,9 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     }
 
     func stop() {
+#if os(iOS)
+        if isPictureInPictureReady { pictureInPictureController?.stopPictureInPicture() }
+#endif
         progressTimer?.invalidate()
         progressTimer = nil
         ignoreNextStoppedEvent = true
@@ -300,11 +322,103 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         player.stop()
         updateDanmakuClockPlaybackState(isPlaying: false, isBuffering: false)
         player.drawable = nil
+#if os(iOS)
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        isPictureInPictureReady = false
+        isPictureInPictureActive = false
+        pictureInPictureController = nil
+        pictureInPictureDrawableID = nil
+        pictureInPictureControllerID = nil
+#endif
     }
+
+#if os(iOS)
+    func detachVideoSurface() {
+        if isPictureInPictureReady { pictureInPictureController?.stopPictureInPicture() }
+        isPictureInPictureReady = false
+        isPictureInPictureActive = false
+        pictureInPictureController = nil
+        pictureInPictureDrawableID = nil
+        pictureInPictureControllerID = nil
+        player.drawable = nil
+    }
+
+    func registerPictureInPictureDrawable(_ id: UUID) {
+        pictureInPictureDrawableID = id
+        isPictureInPictureReady = false
+        pictureInPictureController = nil
+    }
+
+    func pictureInPictureReady(_ controller: VLCPictureInPictureWindowControlling, drawableID: UUID) {
+        guard pictureInPictureDrawableID == drawableID else { return }
+        pictureInPictureController = controller
+        let controllerID = ObjectIdentifier(controller)
+        pictureInPictureControllerID = controllerID
+        controller.stateChangeEventHandler = { [weak self] isStarted in
+            Task { @MainActor [weak self] in
+                self?.pictureInPictureStateChanged(
+                    isStarted,
+                    drawableID: drawableID,
+                    controllerID: controllerID
+                )
+            }
+        }
+        isPictureInPictureReady = true
+        controller.invalidatePlaybackState()
+    }
+
+    func startPictureInPicture() {
+        guard isPictureInPictureReady else { return }
+        pictureInPictureController?.startPictureInPicture()
+    }
+
+    private func pictureInPictureStateChanged(
+        _ isActive: Bool,
+        drawableID: UUID,
+        controllerID: ObjectIdentifier
+    ) {
+        guard pictureInPictureDrawableID == drawableID,
+              pictureInPictureControllerID == controllerID else { return }
+        isPictureInPictureActive = isActive
+        pictureInPictureController?.invalidatePlaybackState()
+    }
+
+    private func configureAudioSession() {
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            status = "音频会话配置失败：\(error.localizedDescription)"
+        }
+    }
+
+#endif
+
+    func seek(by offset: Int64, completion: @escaping () -> Void) {
+        guard canSeekByTime else {
+            DispatchQueue.main.async(execute: completion)
+            return
+        }
+        let origin = Int(player.time.intValue)
+        let target = max(0, min(totalDurationMilliseconds, origin + Int(offset)))
+        let started = player.jump(withOffset: Int32(clamping: target - origin), completion: completion)
+        guard started else {
+            DispatchQueue.main.async(execute: completion)
+            return
+        }
+        resetDanmakuClock(to: target, awaitingPlayerSample: true, originMilliseconds: origin)
+    }
+    func mediaLength() -> Int64 { Int64(totalDurationMilliseconds) }
+    func mediaTime() -> Int64 { Int64(max(0, player.time.intValue)) }
+    func isMediaSeekable() -> Bool { canSeekByTime }
+    func isMediaPlaying() -> Bool { isPlaying }
 
     nonisolated func mediaPlayerStateChanged(_ newState: VLCMediaPlayerState) {
         Task { @MainActor [weak self] in
             self?.refreshState(newState)
+#if os(iOS)
+            self?.pictureInPictureController?.invalidatePlaybackState()
+#endif
         }
     }
 
@@ -313,6 +427,9 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
             guard let self, !self.request.isLive, length > 0 else { return }
             self.reportedDurationMilliseconds = Int(clamping: length)
             self.refreshProgress()
+#if os(iOS)
+            self.pictureInPictureController?.invalidatePlaybackState()
+#endif
         }
     }
 
@@ -711,11 +828,21 @@ struct PlayerScreen: View {
     @State private var touchStartProgress = 0.0
     @State private var touchStartBrightness = 0.0
     @State private var touchStartVolume = 0.0
+    @State private var landscapeLivePanel: LivePlayerPanel?
+    @State private var liveGuideDate = Calendar.current.startOfDay(for: Date())
+    @State private var livePrograms: [TVBoxEPGProgram] = []
+    @State private var isLoadingLiveGuide = false
+    @State private var liveGuideMessage: String?
     @AppStorage("tvbox.danmakuEnabled") private var danmakuEnabled = true
     @AppStorage("tvbox.danmakuAPIURL") private var danmakuAPIAddress = ""
     @AppStorage("tvbox.autoNext") private var autoNextEpisode = true
     @AppStorage("tvbox.aspectRatio") private var savedAspectRatio = ""
     private let historySaveTimer = Timer.publish(every: 10, on: .main, in: .common).autoconnect()
+    private var liveContext: LivePlaybackContext? { session.request.liveContext }
+    private var liveGuideTaskKey: String {
+        guard let liveContext else { return "" }
+        return "\(liveContext.groupID)|\(liveContext.channelID)|\(liveGuideDate.timeIntervalSince1970)"
+    }
     #if os(tvOS)
     @FocusState private var playControlFocused: Bool
     @FocusState private var progressFocused: Bool
@@ -737,7 +864,7 @@ struct PlayerScreen: View {
                 Color.black.ignoresSafeArea()
                 VStack(spacing: 0) {
                     ZStack {
-                        VLCVideoSurface(player: session.player)
+                        VLCVideoSurface(session: session)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .allowsHitTesting(false)
                             .zIndex(0)
@@ -747,7 +874,7 @@ struct PlayerScreen: View {
                             .zIndex(1)
                         #if os(iOS)
                         GeometryReader { interaction in
-                            touchInteractionLayer(size: interaction.size)
+                            touchInteractionLayer(size: interaction.size, isPortraitLayout: isPortraitLayout)
                         }
                         .zIndex(1)
                         #endif
@@ -793,22 +920,38 @@ struct PlayerScreen: View {
                             .transition(.opacity)
                             .zIndex(2)
                         }
+
+                        if !isPortraitLayout, let landscapeLivePanel {
+                            liveLandscapePanel(landscapeLivePanel, size: geometry.size)
+                                .zIndex(3)
+                        }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(height: liveContext != nil && isPortraitLayout ? geometry.size.width * 9 / 16 : nil)
 
                     #if os(iOS)
                     if isPortraitLayout {
-                        VStack(spacing: 0) {
-                            Spacer(minLength: 0)
-                            controlPanel(compact: true)
+                        if liveContext != nil {
+                            if areControlsVisible {
+                                controlPanel(compact: true)
+                                    .padding(.horizontal, playerPadding(compact: true))
+                                    .padding(.top, 8)
+                            }
+                            livePortraitPanels
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        } else {
+                            VStack(spacing: 0) {
+                                Spacer(minLength: 0)
+                                controlPanel(compact: true)
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .padding(.horizontal, playerPadding(compact: true))
+                            .padding(.top, 10)
+                            .padding(.bottom, playerPadding(compact: true))
+                                .opacity(areControlsVisible ? 1 : 0)
+                                .allowsHitTesting(areControlsVisible)
+                                .accessibilityHidden(!areControlsVisible)
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding(.horizontal, playerPadding(compact: true))
-                        .padding(.top, 10)
-                        .padding(.bottom, playerPadding(compact: true))
-                            .opacity(areControlsVisible ? 1 : 0)
-                            .allowsHitTesting(areControlsVisible)
-                            .accessibilityHidden(!areControlsVisible)
                     }
                     #endif
                 }
@@ -869,6 +1012,9 @@ struct PlayerScreen: View {
             playControlFocused = true
             #endif
         }
+        .task(id: liveGuideTaskKey) {
+            await loadLiveGuide()
+        }
         .onDisappear {
             persistPlaybackPosition()
             danmakuTask?.cancel()
@@ -878,7 +1024,7 @@ struct PlayerScreen: View {
         }
         .onReceive(historySaveTimer) { _ in persistPlaybackPosition() }
         .onChange(of: session.didReachEnd) { _, reachedEnd in
-            guard reachedEnd, autoNextEpisode, !session.request.isLive,
+            guard reachedEnd, autoNextEpisode, !session.request.isLive, session.request.liveContext == nil,
                   session.request.queueIndex + 1 < session.request.queue.count else { return }
             moveToEpisode(1)
         }
@@ -1004,7 +1150,10 @@ struct PlayerScreen: View {
         }
 #if os(tvOS)
         .onExitCommand {
-            if areControlsVisible {
+            if landscapeLivePanel != nil {
+                landscapeLivePanel = nil
+                revealControls()
+            } else if areControlsVisible {
                 controlsHideTask?.cancel()
                 withAnimation(.easeInOut(duration: 0.2)) { areControlsVisible = false }
                 Task { @MainActor in
@@ -1024,7 +1173,7 @@ struct PlayerScreen: View {
     }
 
     #if os(iOS)
-    private func touchInteractionLayer(size: CGSize) -> some View {
+    private func touchInteractionLayer(size: CGSize, isPortraitLayout: Bool) -> some View {
         Color.clear
             .contentShape(Rectangle())
             .gesture(
@@ -1036,8 +1185,18 @@ struct PlayerScreen: View {
                     switch result {
                     case .first(let value):
                         handleDoubleTap(at: value.location.x, width: size.width)
-                    case .second:
-                        toggleControlsVisibility()
+                    case .second(let value):
+                        if session.request.liveContext != nil && !isPortraitLayout {
+                            if value.location.x < size.width * 0.28 {
+                                toggleLivePanel(.guide)
+                            } else if value.location.x > size.width * 0.72 {
+                                toggleLivePanel(.sources)
+                            } else {
+                                toggleControlsVisibility()
+                            }
+                        } else {
+                            toggleControlsVisibility()
+                        }
                     }
                 }
             )
@@ -1160,6 +1319,7 @@ struct PlayerScreen: View {
             }
         }
         #endif
+        guard landscapeLivePanel == nil else { return }
         guard session.isPlaying else { return }
         controlsHideTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 3_500_000_000)
@@ -1206,7 +1366,341 @@ struct PlayerScreen: View {
                 .padding(.horizontal, 15)
                 .padding(.vertical, 11)
                 .background(.black.opacity(0.48), in: Capsule())
+            #if os(tvOS)
+            if liveContext != nil {
+                Button { toggleLivePanel(.guide) } label: {
+                    Label("节目单", systemImage: "list.bullet.rectangle")
+                }
+                .buttonStyle(PlayerControlButtonStyle())
+                .accessibilityLabel("显示节目单")
+                Button { toggleLivePanel(.sources) } label: {
+                    Label("线路", systemImage: "antenna.radiowaves.left.and.right")
+                }
+                .buttonStyle(PlayerControlButtonStyle())
+                .accessibilityLabel("显示可切换线路")
+            }
+            #endif
         }
+    }
+
+    private var livePortraitPanels: some View {
+        VStack(spacing: 12) {
+            livePortraitSourceSelector
+            liveGuideContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+        .padding(14)
+        .background(Color.tvboxSurface)
+    }
+
+    private var livePortraitSourceSelector: some View {
+        HStack(spacing: 10) {
+            Text("线路")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(liveContext?.currentChannel?.sources ?? []) { source in
+                        Button {
+                            selectLiveSource(source)
+                        } label: {
+                            HStack(spacing: 5) {
+                                if source.id == liveContext?.sourceID { Image(systemName: "checkmark") }
+                                Text(source.name).lineLimit(1)
+                            }
+                            .font(.system(size: 12, weight: .medium))
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 8)
+                            .background(source.id == liveContext?.sourceID ? Color.tvboxAccent : Color.tvboxSurface, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(source.id == liveContext?.sourceID || isSwitchingEpisode)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func livePanelContent(_ panel: LivePlayerPanel) -> some View {
+        switch panel {
+        case .guide:
+            liveGuideContent
+        case .sources:
+            liveSourceContent
+        }
+    }
+
+    private var liveGuideContent: some View {
+        VStack(spacing: 10) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(liveGuideDates, id: \.self) { date in
+                        Button {
+                            liveGuideDate = date
+                        } label: {
+                            Text(liveDateTitle(date))
+                                .font(.system(size: 12, weight: .semibold))
+                                .padding(.horizontal, 13)
+                                .padding(.vertical, 8)
+                                .background(Calendar.current.isDate(date, inSameDayAs: liveGuideDate) ? Color.tvboxAccent : Color.tvboxSurface, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            if isLoadingLiveGuide {
+                ProgressView("正在载入节目单…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if livePrograms.isEmpty {
+                ContentUnavailableView(
+                    liveGuideMessage ?? "没有可用的节目单",
+                    systemImage: "calendar",
+                    description: Text(liveContext?.epgURL.isEmpty == false ? "选择其他日期，或检查节目单配置。" : "当前配置没有提供节目单地址。")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(livePrograms) { program in
+                            liveProgramRow(program)
+                            Divider().overlay(Color.primary.opacity(0.10))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var liveSourceContent: some View {
+        ScrollView {
+            LazyVStack(spacing: 8) {
+                if let channel = liveContext?.currentChannel {
+                    ForEach(channel.sources) { source in
+                        Button {
+                            selectLiveSource(source)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: source.id == liveContext?.sourceID ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(source.id == liveContext?.sourceID ? Color.tvboxAccent : Color.secondary)
+                                Text(source.name)
+                                    .lineLimit(1)
+                                Spacer()
+                                if source.id == liveContext?.sourceID {
+                                    Text("当前")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(Color.tvboxAccent)
+                                }
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(source.id == liveContext?.sourceID || isSwitchingEpisode)
+                    }
+                }
+            }
+        }
+    }
+
+    private func liveProgramRow(_ program: TVBoxEPGProgram) -> some View {
+        let target = liveProgramTarget(for: program)
+        return Button {
+            guard let target, let context = liveContext else { return }
+            if let request = context.request(
+                groupID: context.groupID,
+                channelID: context.channelID,
+                sourceID: context.sourceID,
+                title: "\(context.currentChannel?.name ?? session.title) · \(program.title)",
+                url: target.url,
+                isLive: target.isLive
+            ) {
+                session.replace(with: request)
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Text(program.start)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(Color.tvboxAccent)
+                    .frame(width: 48, alignment: .leading)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(program.title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                    Text("至 \(program.end)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 4)
+                Text(target?.isLive == true ? "直播中" : (target == nil ? "未提供回看" : "回看"))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(target == nil ? Color.secondary : Color.tvboxAccent)
+                    .lineLimit(1)
+            }
+            .padding(.vertical, 11)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(target == nil)
+    }
+
+    private func liveLandscapePanel(_ panel: LivePlayerPanel, size: CGSize) -> some View {
+        HStack(spacing: 0) {
+            if panel == .guide {
+                liveSidePanel(panel, size: size)
+                Spacer(minLength: 0)
+            } else {
+                Spacer(minLength: 0)
+                liveSidePanel(panel, size: size)
+            }
+        }
+        .padding(.horizontal, playerPadding(compact: size.width < 700))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .transition(.move(edge: panel == .guide ? .leading : .trailing).combined(with: .opacity))
+    }
+
+    private func liveSidePanel(_ panel: LivePlayerPanel, size: CGSize) -> some View {
+        VStack(spacing: 10) {
+            HStack {
+                Text(panel.rawValue)
+                    .font(.headline)
+                Spacer()
+                Button { landscapeLivePanel = nil } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title3)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("关闭\(panel.rawValue)")
+            }
+            livePanelContent(panel)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+        .padding(14)
+        .frame(width: min(max(size.width * 0.32, 280), 390), height: size.height * 0.84)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(.white.opacity(0.12), lineWidth: 1))
+        #if os(tvOS)
+        .focusSection()
+        #endif
+    }
+
+    private var liveGuideDates: [Date] {
+        let calendar = Calendar(identifier: .gregorian)
+        let today = calendar.startOfDay(for: Date())
+        return (-6...1).compactMap { calendar.date(byAdding: .day, value: $0, to: today) }
+    }
+
+    private func liveDateTitle(_ date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) { return "今天" }
+        if calendar.isDateInTomorrow(date) { return "明天" }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M/d EEE"
+        return formatter.string(from: date)
+    }
+
+    private func loadLiveGuide() async {
+        guard let context = liveContext else {
+            livePrograms = []
+            liveGuideMessage = nil
+            return
+        }
+        guard !context.epgURL.isEmpty, let channel = context.currentChannel else {
+            livePrograms = []
+            liveGuideMessage = "当前配置没有提供节目单地址。"
+            isLoadingLiveGuide = false
+            return
+        }
+        isLoadingLiveGuide = true
+        liveGuideMessage = nil
+        do {
+            let values = try await CatalogService().loadEPG(for: channel.name, template: context.epgURL, date: liveGuideDate)
+            guard !Task.isCancelled else { return }
+            livePrograms = values
+            if values.isEmpty { liveGuideMessage = "这一天没有可用的节目单。" }
+        } catch is CancellationError {
+            return
+        } catch {
+            guard !Task.isCancelled else { return }
+            livePrograms = []
+            liveGuideMessage = error.localizedDescription
+        }
+        guard !Task.isCancelled else { return }
+        isLoadingLiveGuide = false
+    }
+
+    private func liveProgramTarget(for program: TVBoxEPGProgram) -> (url: URL, isLive: Bool)? {
+        guard let context = liveContext,
+              let channel = context.currentChannel,
+              let source = context.currentSource,
+              let interval = program.interval(on: liveGuideDate) else { return nil }
+        let now = Date()
+        if now < interval.start { return nil }
+        if now < interval.end {
+            guard let url = URL(string: source.address), Self.isSupportedStreamURL(url) else { return nil }
+            return (url, true)
+        }
+        guard let sourceIndex = channel.sources.firstIndex(of: source) else { return nil }
+        let template = sourceIndex < channel.catchupSources.count ? channel.catchupSources[sourceIndex] : ""
+        let begin = Int(interval.start.timeIntervalSince1970)
+        let end = Int(interval.end.timeIntervalSince1970)
+        let startTokens = ["${(b)timestamp}", "{start}", "${start}"]
+        let endTokens = ["${(e)timestamp}", "{end}", "${end}"]
+        var address: String
+        if startTokens.contains(where: { template.contains($0) }), endTokens.contains(where: { template.contains($0) }) {
+            let replacements = [
+                ("${(b)timestamp}", String(begin)), ("${(e)timestamp}", String(end)),
+                ("${duration}", String(max(0, end - begin))), ("${start}", String(begin)),
+                ("${end}", String(end)), ("{duration}", String(max(0, end - begin))),
+                ("{start}", String(begin)), ("{end}", String(end))
+            ]
+            address = template
+            for (token, value) in replacements { address = address.replacingOccurrences(of: token, with: value) }
+        } else if source.address.contains("PLTV/8888") {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
+            formatter.dateFormat = "yyyyMMddHHmmss"
+            address = source.address + (source.address.contains("?") ? "&" : "?") + "playseek=\(formatter.string(from: interval.start.addingTimeInterval(30)))-\(formatter.string(from: interval.end.addingTimeInterval(30)))"
+        } else {
+            return nil
+        }
+        guard !address.isEmpty,
+              let url = URL(string: address, relativeTo: URL(string: source.address))?.absoluteURL,
+              Self.isSupportedStreamURL(url) else { return nil }
+        return (url, false)
+    }
+
+    private func selectLiveSource(_ source: TVBoxLiveSource) {
+        guard let context = liveContext,
+              let request = context.request(groupID: context.groupID, channelID: context.channelID, sourceID: source.id) else { return }
+        isSwitchingEpisode = true
+        session.replace(with: request)
+        isSwitchingEpisode = false
+    }
+
+    private func toggleLivePanel(_ panel: LivePlayerPanel) {
+        if landscapeLivePanel == panel {
+            landscapeLivePanel = nil
+            revealControls()
+        } else {
+            landscapeLivePanel = panel
+            controlsHideTask?.cancel()
+            withAnimation(.easeInOut(duration: 0.2)) { areControlsVisible = true }
+            #if os(tvOS)
+            playerSurfaceFocused = false
+            #endif
+        }
+    }
+
+    private static func isSupportedStreamURL(_ url: URL) -> Bool {
+        ["http", "https", "rtsp", "rtmp"].contains(url.scheme?.lowercased() ?? "")
     }
 
     private var failureCard: some View {
@@ -1346,6 +1840,17 @@ struct PlayerScreen: View {
 
     private var additionalPlaybackOptions: some View {
         HStack(spacing: 9) {
+#if os(iOS)
+            if session.isPictureInPictureReady {
+                Button {
+                    session.startPictureInPicture()
+                } label: {
+                    trackMenuLabel(title: "画中画", systemImage: "pip.enter")
+                }
+                .buttonStyle(PlayerControlButtonStyle())
+                .accessibilityLabel("开始画中画播放")
+            }
+#endif
             if session.request.availableLines.count > 1 {
                 lineMenu
             }
@@ -1739,6 +2244,20 @@ struct PlayerScreen: View {
         let targetIndex = current.queueIndex + offset
         guard current.queue.indices.contains(targetIndex) else { return }
         let episode = current.queue[targetIndex]
+        if let context = current.liveContext,
+           let target = context.groups.compactMap({ group in
+               group.channels.first(where: { "live::\(group.id)::\($0.id)" == episode.id }).map { (group, $0) }
+           }).first,
+           let source = target.1.sources.first(where: { source in
+               guard let url = URL(string: source.address) else { return false }
+               return Self.isSupportedStreamURL(url)
+           }),
+           let request = context.request(groupID: target.0.id, channelID: target.1.id, sourceID: source.id) {
+            isSwitchingEpisode = true
+            session.replace(with: request)
+            isSwitchingEpisode = false
+            return
+        }
         if current.isLive || current.item == nil {
             guard let url = URL(string: episode.address),
                   ["http", "https", "rtsp", "rtmp"].contains(url.scheme?.lowercased() ?? "") else { return }

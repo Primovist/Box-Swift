@@ -1,7 +1,4 @@
 import SwiftUI
-#if os(iOS)
-import UIKit
-#endif
 
 private enum HomeSection: String, CaseIterable, Identifiable {
     case video = "影视"
@@ -11,56 +8,6 @@ private enum HomeSection: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 }
-
-#if os(iOS)
-private struct ScrollBounceConfigurator: UIViewRepresentable {
-    let isDisabled: Bool
-
-    func makeUIView(context: Context) -> ScrollBounceProbeView {
-        ScrollBounceProbeView(isDisabled: isDisabled)
-    }
-
-    func updateUIView(_ uiView: ScrollBounceProbeView, context: Context) {
-        uiView.isDisabled = isDisabled
-        uiView.updateScrollView()
-    }
-
-    final class ScrollBounceProbeView: UIView {
-        var isDisabled: Bool
-
-        init(isDisabled: Bool) {
-            self.isDisabled = isDisabled
-            super.init(frame: .zero)
-            isUserInteractionEnabled = false
-        }
-
-        required init?(coder: NSCoder) {
-            fatalError("init(coder:) has not been implemented")
-        }
-
-        override func didMoveToSuperview() {
-            super.didMoveToSuperview()
-            updateScrollView()
-        }
-
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            updateScrollView()
-        }
-
-        func updateScrollView() {
-            var ancestor = superview
-            while let view = ancestor {
-                if let scrollView = view as? UIScrollView {
-                    scrollView.bounces = !isDisabled
-                    return
-                }
-                ancestor = view.superview
-            }
-        }
-    }
-}
-#endif
 
 struct HomeView: View {
     @EnvironmentObject private var catalog: CatalogStore
@@ -217,17 +164,11 @@ struct HomeView: View {
                 videoSectionContent(for: selectedSection, wide: wide)
                 primarySectionContent(for: selectedSection, wide: wide)
                 statusSectionContent
-                footer
             }
             .frame(maxWidth: 1500)
             .padding(.horizontal, wide ? 72 : 20)
             .padding(.top, wide ? 28 : 18)
             .frame(maxWidth: .infinity)
-            #if os(iOS)
-            .background {
-                ScrollBounceConfigurator(isDisabled: selectedSection == .live)
-            }
-            #endif
         }
         .id(selectedSection)
         #if os(tvOS)
@@ -354,23 +295,21 @@ struct HomeView: View {
     }
 
     private func categoryPicker() -> some View {
-        Menu {
-            Picker("分类", selection: Binding(
-                get: { catalog.selectedCategoryID },
-                set: {
-                    searchText = ""
-                    catalog.selectCategory($0)
-                }
-            )) {
-                Text("全部").tag("")
-                ForEach(catalog.categories) { category in
-                    Text(category.name).tag(category.id)
-                }
+        Picker(selection: Binding(
+            get: { catalog.selectedCategoryID },
+            set: {
+                searchText = ""
+                catalog.selectCategory($0)
+            }
+        )) {
+            Text("全部").tag("")
+            ForEach(catalog.categories) { category in
+                Text(category.name).tag(category.id)
             }
         } label: {
-            Label(catalog.selectedCategory?.name ?? "全部分类", systemImage: "line.3.horizontal.decrease.circle")
+            Label(catalog.selectedCategory?.name ?? "最近更新", systemImage: "line.3.horizontal.decrease.circle")
         }
-        .menuStyle(.automatic)
+        .pickerStyle(.menu)
     }
 
     private func filterPicker(category: TVBoxCategory) -> some View {
@@ -531,7 +470,7 @@ struct HomeView: View {
                     } else {
                         VStack(alignment: .leading, spacing: 13) {
                             SectionEyebrow(text: group.name)
-                            liveChannelGrid(group.channels, wide: wide)
+                            liveChannelGrid(group, wide: wide)
                         }
                     }
                 }
@@ -539,7 +478,8 @@ struct HomeView: View {
         }
     }
 
-    private func liveChannelGrid(_ channels: [TVBoxLiveChannel], wide: Bool) -> some View {
+    private func liveChannelGrid(_ group: TVBoxLiveGroup, wide: Bool) -> some View {
+        let channels = group.channels
         let columnCount = wide ? 4 : 2
         let rowCount = (channels.count + columnCount - 1) / columnCount
         let gridHeight = CGFloat(rowCount * 64 + max(0, rowCount - 1) * 12)
@@ -547,38 +487,28 @@ struct HomeView: View {
 
         return LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
             ForEach(channels) { channel in
-                liveChannelControl(channel)
-                    .accessibilityHint("选择直播线路并播放")
+                liveChannelControl(channel, group: group)
             }
         }
         .frame(height: gridHeight, alignment: .top)
     }
 
-    private func liveChannelControl(_ channel: TVBoxLiveChannel) -> some View {
-        Menu {
-            if catalog.configuration?.epgURL.isEmpty == false {
-                Button("节目单 · \(channel.name)") { epgChannel = channel }
-            }
-            ForEach(channel.sources) { source in
-                Button(source.name) {
-                    playLive(channel: channel, source: source)
-                }
-            }
+    private func liveChannelControl(_ channel: TVBoxLiveChannel, group: TVBoxLiveGroup) -> some View {
+        Button {
+            playLive(channel: channel, group: group)
         } label: {
             liveChannelLabel(channel)
         }
+        .buttonStyle(FocusAwareButtonStyle())
         .frame(maxWidth: .infinity)
         .frame(height: 64)
+        .accessibilityHint("立即播放")
     }
 
     private func liveChannelLabel(_ channel: TVBoxLiveChannel) -> some View {
         HStack(spacing: 12) {
             if let logoURL = channel.logoURL {
-                ZStack {
-                    Image(systemName: "dot.radiowaves.left.and.right")
-                        .foregroundStyle(Color.tvboxCyan)
-                    CachedArtworkImage(url: logoURL, contentMode: .fit)
-                }
+                CachedArtworkImage(url: logoURL, contentMode: .fit)
                 .frame(width: 34, height: 34)
                 .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             } else {
@@ -605,15 +535,6 @@ struct HomeView: View {
             systemImage: "film",
             description: Text("检查 tvbox.json 站点或搜索条件。")
         )
-    }
-
-    private var footer: some View {
-        HStack(spacing: 8) {
-            Circle().fill(Color.tvboxCyan).frame(width: 7, height: 7)
-            Text("iOS / tvOS")
-        }
-        .font(.system(size: 11, weight: .medium))
-        .foregroundStyle(Color.tvboxMuted)
     }
 
     private func submitSearch() {
@@ -649,35 +570,23 @@ struct HomeView: View {
         }
     }
 
-    private func playLive(channel: TVBoxLiveChannel, source: TVBoxLiveSource) {
-        guard let url = URL(string: source.address),
-              ["http", "https", "rtsp", "rtmp"].contains(url.scheme?.lowercased() ?? "") else { return }
-        let currentGroup = catalog.liveGroups.first { $0.channels.contains(channel) }
-        let queue: [Episode] = catalog.liveGroups.flatMap { group in
-            group.channels.compactMap { value -> Episode? in
-                guard let primarySource = value.sources.first else { return nil }
-                let selected = group.id == currentGroup?.id && value.id == channel.id ? source : primarySource
-                let headers = selected.headers.merging(catalog.configuration?.liveHeaders(for: selected.address) ?? [:]) { _, rule in rule }
-                return Episode(
-                    id: "live::\(group.id)::\(value.id)",
-                    title: "\(group.name) · \(value.name)",
-                    address: selected.address,
-                    flag: "直播",
-                    headers: headers
-                )
-            }
-        }
-        let currentEpisodeID = "live::\(currentGroup?.id ?? "")::\(channel.id)"
-        let queueIndex = queue.firstIndex(where: { $0.id == currentEpisodeID }) ?? 0
-        let headers = source.headers.merging(catalog.configuration?.liveHeaders(for: source.address) ?? [:]) { _, rule in rule }
-        playbackRequest = PlaybackRequest(
-            title: "\(channel.name) · \(source.name)",
-            url: url,
-            headers: headers,
-            queue: queue,
-            queueIndex: queueIndex,
-            isLive: true
+    private func playLive(channel: TVBoxLiveChannel, group: TVBoxLiveGroup) {
+        let accessibleGroups = catalog.liveGroups.filter { $0.password.isEmpty || unlockedLiveGroups.contains($0.id) }
+        guard accessibleGroups.contains(where: { $0.id == group.id }),
+              let source = channel.sources.first(where: { source in
+                  guard let url = URL(string: source.address) else { return false }
+                  return ["http", "https", "rtsp", "rtmp"].contains(url.scheme?.lowercased() ?? "")
+              }),
+              let configuration = catalog.configuration else { return }
+        let context = LivePlaybackContext(
+            groups: accessibleGroups,
+            groupID: group.id,
+            channelID: channel.id,
+            sourceID: source.id,
+            epgURL: configuration.epgURL,
+            headerRules: configuration.liveHeaderRules
         )
+        playbackRequest = context.request(groupID: group.id, channelID: channel.id, sourceID: source.id)
     }
 }
 
