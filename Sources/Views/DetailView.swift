@@ -2,7 +2,6 @@ import SwiftUI
 
 struct DetailView: View {
     @EnvironmentObject private var catalog: CatalogStore
-    @Environment(\.dismiss) private var dismiss
     @State private var detail: MediaItem?
     @State private var selectedLineID = ""
     @State private var preferredEpisodeID: String?
@@ -22,7 +21,6 @@ struct DetailView: View {
                 ScreenBackground()
                 ScrollView {
                     VStack(alignment: .leading, spacing: wide ? 28 : 22) {
-                        topBar
                         if catalog.alternateSources(for: media).count > 1 {
                             sourcePicker
                         }
@@ -43,10 +41,11 @@ struct DetailView: View {
                     .frame(maxWidth: .infinity)
                 }
             }
-            .toolbar(.hidden, for: .navigationBar)
+            .navigationTitle(media.title)
             #if os(iOS)
-            .edgeSwipeBack(width: geometry.size.width)
+            .navigationBarTitleDisplayMode(.inline)
             #endif
+            .toolbar(.visible, for: .navigationBar)
         }
         .task(id: item.id) {
             let loaded = await catalog.detail(for: item)
@@ -70,56 +69,21 @@ struct DetailView: View {
         }
     }
 
-    private var topBar: some View {
-        HStack {
-            Button { dismiss() } label: {
-                Label("返回", systemImage: "chevron.left")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Color.primary)
-                    .padding(.horizontal, 15)
-                    .padding(.vertical, 11)
-                    .background(Color.tvboxSurface, in: Capsule())
-            }
-            .buttonStyle(FocusAwareButtonStyle())
-            Spacer()
-            Text("\(media.sourceName)  /  详情")
-                .font(.system(size: 11, weight: .bold, design: .rounded))
-                .tracking(1.5)
-                .foregroundStyle(Color.tvboxMuted)
-                .lineLimit(1)
-        }
-    }
-
     private var sourcePicker: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            SectionEyebrow(text: "同名片源")
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(catalog.alternateSources(for: media)) { source in
-                        Button {
-                            switchSource(to: source)
-                        } label: {
-                            HStack(spacing: 7) {
-                                if source.sourceKey == media.sourceKey {
-                                    Image(systemName: "checkmark.circle.fill")
-                                }
-                                Text(source.sourceName)
-                            }
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(source.sourceKey == media.sourceKey ? .white : Color.tvboxMuted)
-                            .padding(.horizontal, 13)
-                            .padding(.vertical, 9)
-                            .background(source.sourceKey == media.sourceKey ? Color.tvboxAccent : Color.tvboxSurface, in: Capsule())
-                        }
-                        .buttonStyle(FocusAwareButtonStyle())
-                        .disabled(isResolving)
-                    }
+        Picker("同名片源", selection: Binding(
+            get: { media.sourceKey },
+            set: { sourceKey in
+                if let source = catalog.alternateSources(for: media).first(where: { $0.sourceKey == sourceKey }) {
+                    switchSource(to: source)
                 }
             }
-            #if os(tvOS)
-            .focusSection()
-            #endif
+        )) {
+            ForEach(catalog.alternateSources(for: media)) { source in
+                Text(source.sourceName).tag(source.sourceKey)
+            }
         }
+        .pickerStyle(.menu)
+        .disabled(isResolving)
     }
 
     private var supportedParsers: [TVBoxParser] {
@@ -127,42 +91,16 @@ struct DetailView: View {
     }
 
     private var parserPicker: some View {
-        HStack(spacing: 10) {
-            SectionEyebrow(text: "解析方式")
-            Menu {
-                Button {
-                    catalog.selectParser("")
-                } label: {
-                    if catalog.selectedParserName.isEmpty {
-                        Label("自动选择", systemImage: "checkmark")
-                    } else {
-                        Text("自动选择")
-                    }
-                }
-                ForEach(supportedParsers) { parser in
-                    Button {
-                        catalog.selectParser(parser.name)
-                    } label: {
-                        if catalog.selectedParserName == parser.name {
-                            Label(parser.name, systemImage: "checkmark")
-                        } else {
-                            Text(parser.name)
-                        }
-                    }
-                }
-            } label: {
-                Label(
-                    catalog.selectedParserName.isEmpty ? "自动选择" : catalog.selectedParserName,
-                    systemImage: "chevron.down"
-                )
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Color.primary)
-                .padding(.horizontal, 13)
-                .padding(.vertical, 9)
-                .background(Color.tvboxSurface, in: Capsule())
+        Picker("解析方式", selection: Binding(
+            get: { catalog.selectedParserName },
+            set: { catalog.selectParser($0) }
+        )) {
+            Text("自动选择").tag("")
+            ForEach(supportedParsers) { parser in
+                Text(parser.name).tag(parser.name)
             }
-            .buttonStyle(FocusAwareButtonStyle())
         }
+        .pickerStyle(.menu)
     }
 
     private var wideOverview: some View {
@@ -250,17 +188,17 @@ struct DetailView: View {
     private func actionButtons(compact: Bool) -> some View {
         if compact {
             VStack(alignment: .leading, spacing: 9) {
-                actionButtonContent(compact: true)
+                actionButtonContent
             }
         } else {
             HStack(spacing: 10) {
-                actionButtonContent(compact: false)
+                actionButtonContent
             }
         }
     }
 
     @ViewBuilder
-    private func actionButtonContent(compact: Bool) -> some View {
+    private var actionButtonContent: some View {
             Button {
                 guard let episode = selectedLine?.episodes.first(where: { $0.id == preferredEpisodeID })
                     ?? selectedLine?.episodes.first else {
@@ -275,20 +213,15 @@ struct DetailView: View {
                     Label("立即播放", systemImage: "play.fill")
                 }
             }
-            .buttonStyle(PrimaryActionStyle())
+            .buttonStyle(.borderedProminent)
             .disabled(isResolving || media.episodes.isEmpty)
 
             Button {
                 catalog.toggleFavorite(media)
             } label: {
                 Label(catalog.isFavorite(media) ? "已收藏" : "收藏", systemImage: catalog.isFavorite(media) ? "heart.fill" : "heart")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(catalog.isFavorite(media) ? Color.tvboxAccent : Color.primary)
-                    .padding(.horizontal, compact ? 13 : 17)
-                    .padding(.vertical, 13)
-                    .background(Color.tvboxSurface, in: Capsule())
             }
-            .buttonStyle(FocusAwareButtonStyle())
+            .buttonStyle(.bordered)
     }
 
     private func playlist(wide: Bool) -> some View {
@@ -305,26 +238,12 @@ struct DetailView: View {
             }
 
             if media.lines.count > 1 {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 9) {
-                        ForEach(media.lines) { line in
-                            Button {
-                                selectedLineID = line.id
-                            } label: {
-                                Text(line.flag)
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(selectedLine?.id == line.id ? .white : Color.tvboxMuted)
-                                    .padding(.horizontal, 15)
-                                    .padding(.vertical, 10)
-                                    .background(selectedLine?.id == line.id ? Color.tvboxAccent : Color.tvboxSurface, in: Capsule())
-                            }
-                            .buttonStyle(FocusAwareButtonStyle())
-                        }
+                Picker("线路", selection: $selectedLineID) {
+                    ForEach(media.lines) { line in
+                        Text(line.flag).tag(line.id)
                     }
                 }
-                #if os(tvOS)
-                .focusSection()
-                #endif
+                .pickerStyle(.menu)
             }
 
             if let line = selectedLine, !line.episodes.isEmpty {

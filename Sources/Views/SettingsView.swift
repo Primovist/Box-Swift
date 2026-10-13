@@ -2,7 +2,6 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var catalog: CatalogStore
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @AppStorage("tvbox.autoNext") private var autoNextEpisode = true
     @AppStorage("tvbox.skipOpeningSeconds") private var skipOpeningSeconds = 0
     @State private var endpoint = ""
@@ -12,216 +11,134 @@ struct SettingsView: View {
     @State private var isConfirmingCacheClear = false
 
     var body: some View {
-        GeometryReader { geometry in
-            #if os(iOS)
-            let wide = geometry.size.width >= 900
-                || (horizontalSizeClass == .compact && geometry.size.width >= 700)
-            #else
-            let wide = geometry.size.width >= geometry.size.height
-            #endif
-            ZStack {
-                ScreenBackground()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: wide ? 26 : 21) {
-                        titleBlock
-                        sourceSection
-                        scopeSection
-                        playerPreferencesSection
-                        imageCacheSection
-                    }
-                    .frame(maxWidth: 1120, alignment: .leading)
-                    .padding(.horizontal, wide ? 72 : 20)
-                    .padding(.top, wide ? 28 : 16)
-                    .padding(.bottom, 48)
-                    .frame(maxWidth: .infinity)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            .onAppear {
-                endpoint = catalog.sourceURL
-                Task { imageCacheSize = await ArtworkImageCache.cachedSize() }
-            }
-            .onChange(of: catalog.sourceURL) { _, value in
-                endpoint = value
-            }
-            .confirmationDialog("恢复演示数据？", isPresented: $isConfirmingRestore, titleVisibility: .visible) {
-                Button("恢复演示数据", role: .destructive) {
-                    endpoint = ""
-                    catalog.restoreSamples()
-                }
-                Button("取消", role: .cancel) {}
-            } message: {
-                Text("当前片源和目录状态将切换为内置演示数据。已保存的片源地址仍会保留。")
-            }
-            .confirmationDialog("清除图片缓存？", isPresented: $isConfirmingCacheClear, titleVisibility: .visible) {
-                Button("清除缓存", role: .destructive) {
-                    Task {
-                        await ArtworkImageCache.clear()
-                        imageCacheSize = await ArtworkImageCache.cachedSize()
-                        cacheMessage = "图片缓存已清理。"
-                    }
-                }
-                Button("取消", role: .cancel) {}
-            } message: {
-                Text("已缓存的图片会在下次显示时重新下载。")
-            }
-        }
-    }
+        Form {
+            Section {
+                Text("支持标准 XML API、JSON API 和 type=4 HTTP API 站点。配置中的 Spider（type=3）会跳过。")
+                    .foregroundStyle(.secondary)
 
-    private var titleBlock: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionEyebrow(text: "片源配置")
-            Text("连接 tvbox.json")
-                .font(.system(size: 32, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.primary)
-            Text("支持标准 XML API、JSON API 和 type=4 HTTP API 站点。配置中的 Spider（type=3）会跳过。")
-                .font(.system(size: 14))
-                .foregroundStyle(Color.tvboxMuted)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
+                urlField("https://example.com/tvbox.json", text: $endpoint)
 
-    private var sourceSection: some View {
-        VStack(alignment: .leading, spacing: 15) {
-            Label("tvbox.json 地址", systemImage: "point.3.connected.trianglepath.dotted")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.primary)
-            urlField("https://example.com/tvbox.json", text: $endpoint)
-            HStack(spacing: 10) {
                 Button {
                     Task { await catalog.loadConfiguration(from: endpoint, restoreRemovedSites: true) }
                 } label: {
                     if catalog.isLoading {
-                        ProgressView().tint(.white).frame(minWidth: 70, minHeight: 44)
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
                     } else {
-                        Label("载入配置", systemImage: "arrow.down.circle.fill")
+                        Label("载入配置", systemImage: "arrow.down.circle")
+                            .frame(maxWidth: .infinity)
                     }
                 }
-                .buttonStyle(PrimaryActionStyle())
+                .buttonStyle(.borderedProminent)
                 .disabled(catalog.isLoading || endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                Button("恢复演示") { isConfirmingRestore = true }
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Color.primary)
-                .padding(.horizontal, 15)
-                .frame(minHeight: 44)
-                .background(Color.tvboxSurface, in: Capsule())
-                .buttonStyle(FocusAwareButtonStyle())
+                Button("恢复演示数据…", role: .destructive) {
+                    isConfirmingRestore = true
+                }
+            } header: {
+                Label("片源配置", systemImage: "point.3.connected.trianglepath.dotted")
+            } footer: {
+                Text("支持顶层 sites 或 video.sites；站点 type 0、1、4。支持静态网页媒体地址提取和 JSON 解析器。动态网页嗅探、Spider（type 3）不执行。")
             }
 
-            if let configuration = catalog.configuration {
-                if !catalog.availableSites.isEmpty {
-                    HStack(spacing: 10) {
-                        Picker("当前站点", selection: Binding(
-                            get: { catalog.selectedSiteKey },
-                            set: { catalog.selectSite($0) }
-                        )) {
-                            ForEach(catalog.availableSites) { site in
-                                Text(site.name).tag(site.key)
-                            }
+            if let configuration = catalog.configuration, !catalog.availableSites.isEmpty {
+                Section("当前视频源") {
+                    Picker("站点", selection: Binding(
+                        get: { catalog.selectedSiteKey },
+                        set: { catalog.selectSite($0) }
+                    )) {
+                        ForEach(catalog.availableSites) { site in
+                            Text(site.name).tag(site.key)
                         }
-                        .pickerStyle(.menu)
+                    }
 
-                        Button(role: .destructive) {
-                            catalog.removeSelectedSite()
-                        } label: {
-                            Label("删除", systemImage: "trash")
+                    Button(role: .destructive) {
+                        catalog.removeSelectedSite()
+                    } label: {
+                        HStack {
+                            Spacer(minLength: 0)
+                            Label("删除当前视频源", systemImage: "trash")
                         }
-                        .buttonStyle(.bordered)
-                        .disabled(catalog.selectedSite == nil)
-                        .accessibilityLabel("删除当前所选视频源")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(catalog.selectedSite == nil)
+
+                    LabeledContent("可用站点", value: "\(catalog.availableSites.count)")
+                    LabeledContent("解析器", value: "\(configuration.parsers.count)")
+                    LabeledContent("直播频道", value: "\(configuration.liveGroups.reduce(0) { $0 + $1.channels.count })")
+                    if !configuration.epgURL.isEmpty {
+                        Label("已配置节目单", systemImage: "checkmark.circle")
+                            .foregroundStyle(.secondary)
                     }
                 }
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.tvboxCyan)
-                    Text("当前有 \(catalog.availableSites.count) 个可用站点、\(configuration.parsers.count) 个解析器、\(configuration.liveGroups.reduce(0) { $0 + $1.channels.count }) 个内置直播频道\(configuration.epgURL.isEmpty ? "" : "，已配置节目单")。")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color.primary.opacity(0.82))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
             }
+
             if let loadMessage = catalog.loadMessage {
-                Text(loadMessage)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(loadMessage.localizedCaseInsensitiveContains("失败") || loadMessage.localizedCaseInsensitiveContains("没有") ? .orange : Color.tvboxCyan)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Text("支持顶层 sites 或 video.sites；站点 type 0、1、4。支持静态网页媒体地址提取和 JSON 解析器。动态网页嗅探、Spider（type 3）不执行。")
-                .font(.system(size: 11))
-                .foregroundStyle(Color.tvboxMuted)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(.white.opacity(0.08), lineWidth: 1))
-    }
-
-    private var scopeSection: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            SectionEyebrow(text: "平台适配")
-            Text("宽屏和 tvOS 使用同一横向布局；iPhone 竖屏改为上下排列。界面按钮同时支持触控点击与 tvOS 焦点选择。")
-                .font(.system(size: 13))
-                .foregroundStyle(Color.tvboxMuted)
-                .lineSpacing(4)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.horizontal, 3)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var playerPreferencesSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label("播放偏好", systemImage: "play.rectangle.on.rectangle")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.primary)
-            Toggle(isOn: $autoNextEpisode) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("播完自动播放下一集")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Color.primary)
-                    Text("只对影视剧集生效，不会自动切换直播频道。")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Color.tvboxMuted)
+                Section("配置状态") {
+                    Text(loadMessage)
+                        .foregroundStyle(loadMessage.localizedCaseInsensitiveContains("失败") || loadMessage.localizedCaseInsensitiveContains("没有") ? Color.orange : Color.secondary)
                 }
             }
-            .tint(Color.tvboxAccent)
-            Picker("跳过片头", selection: $skipOpeningSeconds) {
-                ForEach([0, 15, 30, 45, 60], id: \.self) { seconds in
-                    Text(seconds == 0 ? "关闭" : "\(seconds) 秒").tag(seconds)
+
+            Section("播放偏好") {
+                Toggle("播完自动播放下一集", isOn: $autoNextEpisode)
+                Text("只对影视剧集生效，不会自动切换直播频道。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                Picker("跳过片头", selection: $skipOpeningSeconds) {
+                    ForEach([0, 15, 30, 45, 60], id: \.self) { seconds in
+                        Text(seconds == 0 ? "关闭" : "\(seconds) 秒").tag(seconds)
+                    }
+                }
+                Text("断点续播优先于片头跳过。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("图片缓存") {
+                LabeledContent("已缓存", value: ByteCountFormatter.string(fromByteCount: imageCacheSize, countStyle: .file))
+                Text("包括影视海报和直播台标。清理后会在下次显示时重新下载。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Button(role: .destructive) {
+                    isConfirmingCacheClear = true
+                } label: {
+                    Label("清理缓存", systemImage: "trash")
                 }
             }
-            .pickerStyle(.menu)
-            .foregroundStyle(Color.primary)
-            Text("断点续播优先于片头跳过。")
-                .font(.system(size: 11))
-                .foregroundStyle(Color.tvboxMuted)
         }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(.white.opacity(0.08), lineWidth: 1))
-    }
-
-    private var imageCacheSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("图片缓存", systemImage: "photo.stack")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.primary)
-            Text("已缓存 \(ByteCountFormatter.string(fromByteCount: imageCacheSize, countStyle: .file))，包括影视海报和直播台标。清理后会在下次显示时重新下载。")
-                .font(.system(size: 12))
-                .foregroundStyle(Color.tvboxMuted)
-                .fixedSize(horizontal: false, vertical: true)
-            Button(role: .destructive) { isConfirmingCacheClear = true } label: {
-                Label("清理缓存", systemImage: "trash")
-                    .frame(maxWidth: .infinity, minHeight: 42)
+        .formStyle(.grouped)
+        .frame(maxWidth: 1120)
+        .frame(maxWidth: .infinity)
+        .onAppear {
+            endpoint = catalog.sourceURL
+            Task { imageCacheSize = await ArtworkImageCache.cachedSize() }
+        }
+        .onChange(of: catalog.sourceURL) { _, value in
+            endpoint = value
+        }
+        .confirmationDialog("恢复演示数据？", isPresented: $isConfirmingRestore, titleVisibility: .visible) {
+            Button("恢复演示数据", role: .destructive) {
+                endpoint = ""
+                catalog.restoreSamples()
             }
-            .buttonStyle(.bordered)
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("当前片源和目录状态将切换为内置演示数据。已保存的片源地址仍会保留。")
         }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(.white.opacity(0.08), lineWidth: 1))
+        .confirmationDialog("清除图片缓存？", isPresented: $isConfirmingCacheClear, titleVisibility: .visible) {
+            Button("清除缓存", role: .destructive) {
+                Task {
+                    await ArtworkImageCache.clear()
+                    imageCacheSize = await ArtworkImageCache.cachedSize()
+                    cacheMessage = "图片缓存已清理。"
+                }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("已缓存的图片会在下次显示时重新下载。")
+        }
         .alert("图片缓存", isPresented: Binding(
             get: { cacheMessage != nil },
             set: { if !$0 { cacheMessage = nil } }
@@ -236,17 +153,12 @@ struct SettingsView: View {
     private func urlField(_ title: String, text: Binding<String>) -> some View {
         #if os(iOS)
         TextField(title, text: text)
-            .textFieldStyle(.roundedBorder)
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .keyboardType(.URL)
-            .frame(maxWidth: .infinity, alignment: .leading)
         #else
         TextField(title, text: text)
-            .textFieldStyle(.plain)
             .autocorrectionDisabled()
-            .frame(maxWidth: .infinity, alignment: .leading)
         #endif
     }
-
 }

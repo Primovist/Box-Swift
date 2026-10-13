@@ -40,29 +40,6 @@ struct DanmakuSearchView: View {
                             }
                         }
 
-                        HStack(spacing: compact ? 8 : 10) {
-                            searchField
-                            Button {
-                                Task { await search() }
-                            } label: {
-                                if compact {
-                                    Image(systemName: "magnifyingglass")
-                                        .font(.system(size: 16, weight: .semibold))
-                                        .frame(width: 44, height: 44)
-                                        .background(Color.tvboxAccent, in: Circle())
-                                } else {
-                                    Label("搜索", systemImage: "magnifyingglass")
-                                        .font(.system(size: 15, weight: .bold))
-                                        .padding(.horizontal, 22)
-                                        .frame(minHeight: 48)
-                                        .background(Color.tvboxAccent, in: Capsule())
-                                }
-                            }
-                            .buttonStyle(FocusAwareButtonStyle())
-                            .disabled(isLoading || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || apiAddress.isEmpty)
-                            .accessibilityLabel("搜索弹幕源作品")
-                        }
-
                         if apiAddress.isEmpty {
                             Group {
                                 if compact {
@@ -105,6 +82,10 @@ struct DanmakuSearchView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
+            .searchable(text: $query, prompt: "搜索剧名或影片名")
+            .onSubmit(of: .search) {
+                Task { await search() }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("关闭") { dismiss() }
@@ -156,23 +137,6 @@ struct DanmakuSearchView: View {
             .frame(maxWidth: .infinity)
         }
         .frame(maxHeight: .infinity)
-    }
-
-    @ViewBuilder
-    private var searchField: some View {
-        #if os(iOS)
-        TextField("搜索剧名或影片名", text: $query)
-            .textFieldStyle(.roundedBorder)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-            .submitLabel(.search)
-            .onSubmit { Task { await search() } }
-        #else
-        TextField("搜索剧名或影片名", text: $query)
-            .textFieldStyle(.plain)
-            .autocorrectionDisabled()
-            .onSubmit { Task { await search() } }
-        #endif
     }
 
     private var playbackContext: String {
@@ -331,27 +295,30 @@ struct DanmakuPreferencesForm: View {
     @AppStorage("tvbox.danmakuRandomColor") private var randomColor = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 17) {
-            Label("弹幕源", systemImage: "server.rack")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.primary)
-            urlField("DandanPlay 兼容的 danmu_api 地址", text: $apiAddress)
-            Text("填写服务根地址；支持服务端将 Token 放在 URL 路径中。搜索作品后选择集数加载 XML 弹幕。")
-                .font(.system(size: 11))
-                .foregroundStyle(Color.tvboxMuted)
-                .fixedSize(horizontal: false, vertical: true)
+        Form {
+            Section("弹幕源") {
+                urlField("DandanPlay 兼容的 danmu_api 地址", text: $apiAddress)
+                Text("填写服务根地址；支持服务端将 Token 放在 URL 路径中。搜索作品后选择集数加载 XML 弹幕。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
 
-            Divider().overlay(.white.opacity(0.12))
-            Toggle("显示弹幕", isOn: $isEnabled).tint(Color.tvboxAccent)
-            Toggle("随机弹幕颜色", isOn: $randomColor).tint(Color.tvboxAccent)
-            sliderRow(title: "弹幕透明度", value: $opacity, range: 0.1...1, suffix: "%", percent: true)
-            sliderRow(title: "弹幕速度", value: $speed, range: 0.5...2.4, suffix: "×")
-            sliderRow(title: "弹幕字号", value: $sizeScale, range: 0.6...2.0, suffix: "×")
-            sliderRow(title: "最大行数", value: Binding(
-                get: { Double(maxLines) },
-                set: { maxLines = Int($0.rounded()) }
-            ), range: 1...15, suffix: " 行", integer: true)
+            Section("显示") {
+                Toggle("显示弹幕", isOn: $isEnabled)
+                Toggle("随机弹幕颜色", isOn: $randomColor)
+            }
+
+            Section("弹幕外观") {
+                sliderRow(title: "弹幕透明度", value: $opacity, range: 0.1...1, suffix: "%", percent: true)
+                sliderRow(title: "弹幕速度", value: $speed, range: 0.5...2.4, suffix: "×")
+                sliderRow(title: "弹幕字号", value: $sizeScale, range: 0.6...2.0, suffix: "×")
+                sliderRow(title: "最大行数", value: Binding(
+                    get: { Double(maxLines) },
+                    set: { maxLines = Int($0.rounded()) }
+                ), range: 1...15, suffix: " 行", integer: true)
+            }
         }
+        .formStyle(.grouped)
     }
 
     @ViewBuilder
@@ -372,39 +339,38 @@ struct DanmakuPreferencesForm: View {
     private func sliderRow(title: String, value: Binding<Double>, range: ClosedRange<Double>, suffix: String, percent: Bool = false, integer: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(Color.primary)
+                Text(title)
                 Spacer()
                 Text(displayValue(value.wrappedValue, suffix: suffix, percent: percent, integer: integer))
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Color.tvboxMuted)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
             }
             #if os(tvOS)
-            HStack(spacing: 14) {
+            HStack {
                 Button {
                     adjust(value, by: -(integer ? 1 : 0.1), in: range, integer: integer)
                 } label: {
-                    Image(systemName: "minus.circle.fill")
-                        .font(.system(size: 25))
-                        .foregroundStyle(Color.tvboxCyan)
+                    Label("减少\(title)", systemImage: "minus")
+                        .labelStyle(.iconOnly)
                 }
-                .buttonStyle(FocusAwareButtonStyle())
+                .buttonStyle(.bordered)
                 .accessibilityLabel("减少\(title)")
                 .disabled(value.wrappedValue <= range.lowerBound)
+
+                Spacer()
 
                 Button {
                     adjust(value, by: integer ? 1 : 0.1, in: range, integer: integer)
                 } label: {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 25))
-                        .foregroundStyle(Color.tvboxCyan)
+                    Label("增加\(title)", systemImage: "plus")
+                        .labelStyle(.iconOnly)
                 }
-                .buttonStyle(FocusAwareButtonStyle())
+                .buttonStyle(.bordered)
                 .accessibilityLabel("增加\(title)")
                 .disabled(value.wrappedValue >= range.upperBound)
-                Spacer(minLength: 0)
             }
             #else
-            Slider(value: value, in: range, step: integer ? 1 : 0.1).tint(Color.tvboxAccent)
+            Slider(value: value, in: range, step: integer ? 1 : 0.1)
             #endif
         }
     }
@@ -426,15 +392,7 @@ struct DanmakuSettingsSheet: View {
 
     var body: some View {
         NavigationStack {
-            ZStack {
-                ScreenBackground()
-                ScrollView {
-                    DanmakuPreferencesForm()
-                        .padding(22)
-                        .frame(maxWidth: 800, alignment: .leading)
-                        .frame(maxWidth: .infinity)
-                }
-            }
+            DanmakuPreferencesForm()
             .navigationTitle("弹幕设置")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

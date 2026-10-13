@@ -1217,7 +1217,7 @@ struct PlayerScreen: View {
             Text("无法播放此地址")
                 .font(.system(size: 20, weight: .bold, design: .rounded))
             Button("重试") { session.retry() }
-                .buttonStyle(PrimaryActionStyle())
+                .buttonStyle(.borderedProminent)
         }
         .padding(22)
         .frame(maxWidth: 520)
