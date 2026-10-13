@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct DanmakuOverlay: View {
-    @ObservedObject var session: VLCPlaybackSession
+    @ObservedObject var clock: DanmakuPlaybackClock
     let comments: [DanmakuComment]
     let generation: Int
 
@@ -16,15 +16,17 @@ struct DanmakuOverlay: View {
     var body: some View {
         GeometryReader { geometry in
             let key = layoutKey(for: geometry.size)
-            TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isEnabled || !session.isDanmakuClockAdvancing || placements.isEmpty)) { timeline in
+            let clockRevision = clock.revision
+            TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isEnabled || !clock.isAdvancing || placements.isEmpty)) { timeline in
                 let frameUptime = ProcessInfo.processInfo.systemUptime + timeline.date.timeIntervalSinceNow
-                let playbackTime = session.danmakuPlaybackTime(at: frameUptime)
+                let playbackTime = clock.time(at: frameUptime)
                 Canvas { context, size in
                     guard isEnabled, !placements.isEmpty else { return }
                     draw(context: &context, size: size, safeAreaInsets: geometry.safeAreaInsets, time: playbackTime)
                 }
                 .clipped()
             }
+            .id(clockRevision)
             .task(id: key) {
                 placements = DanmakuLayout.make(
                     comments: comments,

@@ -636,6 +636,7 @@ private struct EPGPlaybackTarget: Equatable {
     let url: URL
     let isLive: Bool
     let durationMilliseconds: Int
+    let catchupWindow: LiveCatchupWindow?
 }
 
 private struct LiveEPGSheet: View {
@@ -770,48 +771,20 @@ private struct LiveEPGSheet: View {
         if now < interval.end {
             guard let liveURL = URL(string: source.address),
                   ["http", "https", "rtsp", "rtmp"].contains(liveURL.scheme?.lowercased() ?? "") else { return nil }
-            return EPGPlaybackTarget(url: liveURL, isLive: true, durationMilliseconds: 0)
+            return EPGPlaybackTarget(url: liveURL, isLive: true, durationMilliseconds: 0, catchupWindow: nil)
         }
 
         guard let sourceIndex = channel.sources.firstIndex(of: source) else { return nil }
         let template = sourceIndex < channel.catchupSources.count ? channel.catchupSources[sourceIndex] : ""
-        let begin = Int(interval.start.timeIntervalSince1970)
-        let end = Int(interval.end.timeIntervalSince1970)
-        let startTokens = ["${(b)timestamp}", "{start}", "${start}"]
-        let endTokens = ["${(e)timestamp}", "{end}", "${end}"]
-        var address: String
-        if startTokens.contains(where: { template.contains($0) }),
-           endTokens.contains(where: { template.contains($0) }) {
-            let replacements = [
-                ("${(b)timestamp}", String(begin)),
-                ("${(e)timestamp}", String(end)),
-                ("${duration}", String(max(0, end - begin))),
-                ("${start}", String(begin)),
-                ("${end}", String(end)),
-                ("{duration}", String(max(0, end - begin))),
-                ("{start}", String(begin)),
-                ("{end}", String(end))
-            ]
-            address = template
-            for (token, value) in replacements {
-                address = address.replacingOccurrences(of: token, with: value)
-            }
-        } else if source.address.contains("PLTV/8888") {
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
-            formatter.dateFormat = "yyyyMMddHHmmss"
-            let start = formatter.string(from: interval.start.addingTimeInterval(30))
-            let end = formatter.string(from: interval.end.addingTimeInterval(30))
-            address = source.address + (source.address.contains("?") ? "&" : "?") + "playseek=\(start)-\(end)"
-        } else {
-            return nil
-        }
-        guard !address.isEmpty else { return nil }
-        let candidate = URL(string: address, relativeTo: URL(string: source.address))?.absoluteURL
-        guard let candidate, ["http", "https", "rtsp", "rtmp"].contains(candidate.scheme?.lowercased() ?? "") else { return nil }
         let durationMilliseconds = max(0, Int(interval.end.timeIntervalSince(interval.start) * 1_000))
-        return EPGPlaybackTarget(url: candidate, isLive: false, durationMilliseconds: durationMilliseconds)
+        let catchupWindow = LiveCatchupWindow(
+            sourceAddress: source.address,
+            template: template,
+            start: interval.start,
+            end: interval.end
+        )
+        guard let candidate = catchupWindow.url() else { return nil }
+        return EPGPlaybackTarget(url: candidate, isLive: false, durationMilliseconds: durationMilliseconds, catchupWindow: catchupWindow)
     }
 
     private func play(_ program: TVBoxEPGProgram) {
@@ -822,7 +795,8 @@ private struct LiveEPGSheet: View {
             url: target.url,
             headers: source.headers.merging(headersForAddress(source.address)) { _, rule in rule },
             isLive: target.isLive,
-            durationMilliseconds: target.durationMilliseconds
+            durationMilliseconds: target.durationMilliseconds,
+            catchupWindow: target.catchupWindow
         ))
         dismiss()
     }

@@ -417,7 +417,8 @@ struct LivePlaybackContext {
         title: String? = nil,
         url overrideURL: URL? = nil,
         isLive: Bool = true,
-        durationMilliseconds: Int = 0
+        durationMilliseconds: Int = 0,
+        catchupWindow: LiveCatchupWindow? = nil
     ) -> PlaybackRequest? {
         guard let group = groups.first(where: { $0.id == groupID }),
               let channel = group.channels.first(where: { $0.id == channelID }),
@@ -451,8 +452,94 @@ struct LivePlaybackContext {
             queueIndex: queueIndex,
             isLive: isLive,
             durationMilliseconds: durationMilliseconds,
-            liveContext: selectedContext
+            liveContext: selectedContext,
+            catchupWindow: catchupWindow
         )
+    }
+}
+
+struct LiveCatchupWindow: Equatable {
+    let sourceAddress: String
+    let template: String
+    let start: Date
+    let end: Date
+
+    var durationMilliseconds: Int {
+        max(0, Int(end.timeIntervalSince(start) * 1_000))
+    }
+
+    var supportsServerSeeking: Bool {
+        let hasStart = template.contains("${(b)") || template.contains("${start}") || template.contains("{start}")
+        let hasEnd = template.contains("${(e)") || template.contains("${end}") || template.contains("{end}")
+        (hasStart && hasEnd) || sourceAddress.contains("PLTV/8888")
+    }
+
+    func url(startingAtMilliseconds offset: Int = 0) -> URL? {
+        guard durationMilliseconds > 0 else { return nil }
+        let boundedOffset = min(max(0, offset), max(0, durationMilliseconds - 1_000))
+        let startDate = start.addingTimeInterval(Double(boundedOffset) / 1_000)
+        var address = template
+
+        if address.contains("${(b)") || address.contains("${(e)") {
+            let beginReplacements = formattedPlaceholderReplacements(in: address, marker: "b", date: startDate)
+            let endReplacements = formattedPlaceholderReplacements(in: address, marker: "e", date: end)
+            if !beginReplacements.isEmpty || !endReplacements.isEmpty {
+                guard !beginReplacements.isEmpty, !endReplacements.isEmpty else { return nil }
+                for (placeholder, value) in beginReplacements + endReplacements {
+                    address = address.replacingOccurrences(of: placeholder, with: value)
+                }
+            }
+        }
+
+        let beginSeconds = Int(startDate.timeIntervalSince1970)
+        let endSeconds = Int(end.timeIntervalSince1970)
+        let replacements = [
+            ("${(b)timestamp}", String(beginSeconds)),
+            ("${(e)timestamp}", String(endSeconds)),
+            ("${duration}", String(max(0, endSeconds - beginSeconds))),
+            ("${start}", String(beginSeconds)), ("${end}", String(endSeconds)),
+            ("{start}", String(beginSeconds)), ("{end}", String(endSeconds)),
+            ("{duration}", String(max(0, endSeconds - beginSeconds)))
+        ]
+        for (placeholder, value) in replacements {
+            address = address.replacingOccurrences(of: placeholder, with: value)
+        }
+
+        if address == template, sourceAddress.contains("PLTV/8888") {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
+            formatter.dateFormat = "yyyyMMddHHmmss"
+            address = sourceAddress + (sourceAddress.contains("?") ? "&" : "?")
+                + "playseek=\(formatter.string(from: startDate.addingTimeInterval(30)))-\(formatter.string(from: end.addingTimeInterval(30)))"
+        }
+
+        guard !address.isEmpty,
+              !address.contains("${(b)"), !address.contains("${(e)"),
+              let url = URL(string: address, relativeTo: URL(string: sourceAddress))?.absoluteURL,
+              ["http", "https", "rtsp", "rtmp"].contains(url.scheme?.lowercased() ?? "") else { return nil }
+        return url
+    }
+
+    private func formattedPlaceholderReplacements(in address: String, marker: String, date: Date) -> [(String, String)] {
+        let pattern = #"\$\{\("# + marker + #"\)([^}]+)\}"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let nsAddress = address as NSString
+        return regex.matches(in: address, range: NSRange(location: 0, length: nsAddress.length)).compactMap { match in
+            guard match.numberOfRanges > 1 else { return nil }
+            let placeholder = nsAddress.substring(with: match.range)
+            let expression = nsAddress.substring(with: match.range(at: 1))
+            let components = expression.split(separator: ":", maxSplits: 1).map(String.init)
+            guard let format = components.first, !format.isEmpty else { return nil }
+            guard format.lowercased() != "timestamp" else { return nil }
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = components.last?.lowercased() == "utc"
+                ? TimeZone(secondsFromGMT: 0)
+                : (TimeZone(identifier: "Asia/Shanghai") ?? .current)
+            formatter.dateFormat = format
+            return (placeholder, formatter.string(from: date))
+        }
     }
 }
 
@@ -475,6 +562,7 @@ struct PlaybackRequest: Identifiable {
     let lineID: String?
     let danmakuSource: String?
     let liveContext: LivePlaybackContext?
+    let catchupWindow: LiveCatchupWindow?
 
     init(
         title: String,
@@ -493,7 +581,8 @@ struct PlaybackRequest: Identifiable {
         availableLines: [PlaybackLine] = [],
         lineID: String? = nil,
         danmakuSource: String? = nil,
-        liveContext: LivePlaybackContext? = nil
+        liveContext: LivePlaybackContext? = nil,
+        catchupWindow: LiveCatchupWindow? = nil
     ) {
         self.title = title
         self.url = url
@@ -512,6 +601,30 @@ struct PlaybackRequest: Identifiable {
         self.lineID = lineID
         self.danmakuSource = danmakuSource
         self.liveContext = liveContext
+        self.catchupWindow = catchupWindow
+    }
+
+    func replacing(url: URL) -> PlaybackRequest {
+        PlaybackRequest(
+            title: title,
+            url: url,
+            headers: headers,
+            itemID: itemID,
+            siteKey: siteKey,
+            episodeID: episodeID,
+            resumeMilliseconds: resumeMilliseconds,
+            item: item,
+            queue: queue,
+            queueIndex: queueIndex,
+            isLive: isLive,
+            durationMilliseconds: durationMilliseconds,
+            skipOpeningMilliseconds: skipOpeningMilliseconds,
+            availableLines: availableLines,
+            lineID: lineID,
+            danmakuSource: danmakuSource,
+            liveContext: liveContext,
+            catchupWindow: self.catchupWindow
+        )
     }
 }
 
