@@ -70,7 +70,9 @@ struct SettingsView: View {
                         isConfirmingRestore = true
                     }
                 }
+                #if os(iOS)
                 .listRowSeparator(.hidden)
+                #endif
             } header: {
                 Text("片源配置")
             } footer: {
