@@ -192,6 +192,48 @@ final class CatalogStore: ObservableObject {
         }
     }
 
+    func removeCurrentServer() {
+        let address = sourceURL
+        guard !address.isEmpty else { return }
+
+        savedSourceURLs.removeAll { $0 == address }
+        UserDefaults.standard.set(savedSourceURLs, forKey: "tvbox.savedSourceURLs")
+        UserDefaults.standard.removeObject(forKey: "tvbox.sourceURL")
+        UserDefaults.standard.removeObject(forKey: Self.configurationKey(for: address))
+        UserDefaults.standard.removeObject(forKey: Self.siteKey(for: address))
+        UserDefaults.standard.removeObject(forKey: Self.parserKey(for: address))
+        UserDefaults.standard.removeObject(forKey: Self.removedSitesKey(for: address))
+        UserDefaults.standard.removeObject(forKey: "tvbox.selectedSite")
+        UserDefaults.standard.removeObject(forKey: "tvbox.selectedParser")
+
+        configurationTask?.cancel()
+        contentTask?.cancel()
+        invalidateLiveLoad()
+        requestGeneration += 1
+        sourceURL = ""
+        selectedSiteKey = ""
+        selectedParserName = ""
+        removedSiteKeys = []
+        configuration = nil
+        categories = []
+        selectedCategoryID = ""
+        items = []
+        liveGroups = []
+        hasLoadedLive = false
+        isLoading = false
+        isLoadingLive = false
+        isSearching = false
+        canLoadMore = false
+        searchQuery = ""
+        isSearchingAllSites = false
+        globalSearchResults = []
+        globalSearchSites = []
+        globalSearchPageBySite = [:]
+        globalSearchPageCountBySite = [:]
+        selectedFilters = [:]
+        loadMessage = "已删除当前登记服务器。"
+    }
+
     func selectParser(_ name: String) {
         selectedParserName = name
         if name.isEmpty {

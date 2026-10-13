@@ -13,6 +13,7 @@ struct HomeView: View {
     @EnvironmentObject private var catalog: CatalogStore
     @AppStorage("tvbox.searchAcrossSites") private var searchAcrossSites = true
     @State private var searchText = ""
+    @FocusState private var isSearchFocused: Bool
     @State private var section: HomeSection = .video
     @State private var playbackRequest: PlaybackRequest?
     @State private var epgChannel: TVBoxLiveChannel?
@@ -119,6 +120,7 @@ struct HomeView: View {
                     selectedSectionContent(for: tab, wide: wide)
                         .navigationTitle("搜索")
                         .searchable(text: $searchText, prompt: "搜索片名")
+                        .searchFocused($isSearchFocused)
                         .searchScopes($searchAcrossSites) {
                             Text("全站").tag(true)
                             Text("本站").tag(false)
@@ -132,6 +134,11 @@ struct HomeView: View {
                 }
             }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture { isSearchFocused = false }
+                }
                 .navigationDestination(for: MediaItem.self) { item in
                     DetailView(item: item)
                         .toolbar(.visible, for: .navigationBar)
@@ -594,6 +601,7 @@ struct HomeView: View {
 
 private struct LiveGroupPasswordSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var isPasswordFocused: Bool
     let group: TVBoxLiveGroup
     let onUnlock: () -> Void
     @State private var password = ""
@@ -604,11 +612,17 @@ private struct LiveGroupPasswordSheet: View {
             Form {
                 Section(group.name) {
                     SecureField("输入分组密码", text: $password)
+                        .focused($isPasswordFocused)
                     if isInvalid {
                         Text("密码不正确。")
                             .foregroundStyle(.orange)
                     }
                 }
+            }
+            .background {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { isPasswordFocused = false }
             }
             .navigationTitle("受限直播分组")
             #if os(iOS)

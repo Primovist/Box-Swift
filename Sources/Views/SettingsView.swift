@@ -5,9 +5,10 @@ struct SettingsView: View {
     @AppStorage("tvbox.autoNext") private var autoNextEpisode = true
     @AppStorage("tvbox.skipOpeningSeconds") private var skipOpeningSeconds = 0
     @State private var endpoint = ""
+    @FocusState private var isEndpointFocused: Bool
     @State private var imageCacheSize: Int64 = 0
     @State private var cacheMessage: String?
-    @State private var isConfirmingRestore = false
+    @State private var isConfirmingServerRemoval = false
     @State private var isConfirmingCacheClear = false
 
     private var liveChannelCountText: String {
@@ -48,27 +49,26 @@ struct SettingsView: View {
                                     endpoint = address
                                     Task { await catalog.loadConfiguration(from: address) }
                                 } label: {
-                                    if address == catalog.sourceURL {
-                                        Label(address, systemImage: "checkmark")
-                                    } else {
-                                        Text(address)
-                                    }
+                                    Text(address)
+                                        .fontWeight(address == catalog.sourceURL ? .semibold : .regular)
                                 }
                             }
                         } label: {
-                            HStack {
-                                Label("已登记服务器", systemImage: "server.rack")
-                                Spacer()
+                            HStack(spacing: 8) {
+                                Text("已登记服务器")
                                 Text("\(catalog.savedSourceURLs.count)")
                                     .foregroundStyle(.secondary)
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
 
                     Divider()
-                    Button("恢复演示数据…", role: .destructive) {
-                        isConfirmingRestore = true
+                    Button("删除当前登记服务器…", role: .destructive) {
+                        isConfirmingServerRemoval = true
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .disabled(catalog.sourceURL.isEmpty)
                 }
                 #if os(iOS)
                 .listRowSeparator(.hidden)
@@ -90,18 +90,20 @@ struct SettingsView: View {
                         }
                     }
 
-                    Button(role: .destructive) {
-                        catalog.removeSelectedSite()
-                    } label: {
-                        Label("删除当前视频源", systemImage: "trash")
+                    HStack(spacing: 8) {
+                        Text("可用站点")
+                        Text("\(catalog.availableSites.count)").foregroundStyle(.secondary)
                     }
-                    .disabled(catalog.selectedSite == nil)
-
-                    LabeledContent("可用站点", value: "\(catalog.availableSites.count)")
-                    LabeledContent("可用解析器", value: "\(configuration.parsers.filter { [0, 1].contains($0.type) }.count)")
-                    LabeledContent("直播频道", value: liveChannelCountText)
+                    HStack(spacing: 8) {
+                        Text("可用解析器")
+                        Text("\(configuration.parsers.filter { [0, 1].contains($0.type) }.count)").foregroundStyle(.secondary)
+                    }
+                    HStack(spacing: 8) {
+                        Text("直播频道")
+                        Text(liveChannelCountText).foregroundStyle(.secondary)
+                    }
                     if !configuration.epgURL.isEmpty {
-                        Label("已配置节目单", systemImage: "checkmark.circle")
+                        Text("已配置节目单")
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -131,16 +133,25 @@ struct SettingsView: View {
             }
 
             Section("图片缓存") {
-                LabeledContent("已缓存", value: ByteCountFormatter.string(fromByteCount: imageCacheSize, countStyle: .file))
+                HStack(spacing: 8) {
+                    Text("已缓存")
+                    Text(ByteCountFormatter.string(fromByteCount: imageCacheSize, countStyle: .file))
+                        .foregroundStyle(.secondary)
+                }
                 Text("包括影视海报和直播台标。清理后会在下次显示时重新下载。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 Button(role: .destructive) {
                     isConfirmingCacheClear = true
                 } label: {
-                    Label("清理缓存", systemImage: "trash")
+                    Text("清理缓存")
                 }
             }
+        }
+        .background {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { isEndpointFocused = false }
         }
         .formStyle(.grouped)
         .frame(maxWidth: 1120)
@@ -157,14 +168,13 @@ struct SettingsView: View {
         .onChange(of: catalog.sourceURL) { _, value in
             endpoint = value
         }
-        .confirmationDialog("恢复演示数据？", isPresented: $isConfirmingRestore, titleVisibility: .visible) {
-            Button("恢复演示数据", role: .destructive) {
-                endpoint = ""
-                catalog.restoreSamples()
+        .confirmationDialog("删除当前登记服务器？", isPresented: $isConfirmingServerRemoval, titleVisibility: .visible) {
+            Button("删除服务器", role: .destructive) {
+                catalog.removeCurrentServer()
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("当前片源和目录状态将切换为内置演示数据。已保存的片源地址仍会保留。")
+            Text("将从已登记服务器列表中删除当前地址，并清除该服务器保存的配置和目录状态。")
         }
         .confirmationDialog("清除图片缓存？", isPresented: $isConfirmingCacheClear, titleVisibility: .visible) {
             Button("清除缓存", role: .destructive) {
@@ -192,11 +202,13 @@ struct SettingsView: View {
     private func urlField(_ title: String, text: Binding<String>) -> some View {
         #if os(iOS)
         TextField(title, text: text)
+            .focused($isEndpointFocused)
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .keyboardType(.URL)
         #else
         TextField(title, text: text)
+            .focused($isEndpointFocused)
             .autocorrectionDisabled()
         #endif
     }

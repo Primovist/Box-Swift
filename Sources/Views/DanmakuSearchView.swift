@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DanmakuSearchView: View {
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var isSearchFocused: Bool
     @AppStorage("tvbox.danmakuAPIURL") private var apiAddress = ""
     @State private var query = ""
     @State private var animeResults: [DanmakuAnime] = []
@@ -76,6 +77,11 @@ struct DanmakuSearchView: View {
                     .padding(.vertical, compact ? 8 : 18)
                     .frame(maxWidth: 1000, maxHeight: .infinity, alignment: .topLeading)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background {
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .onTapGesture { isSearchFocused = false }
+                    }
                 }
             }
             .navigationTitle("在线搜索弹幕")
@@ -83,6 +89,7 @@ struct DanmakuSearchView: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .searchable(text: $query, prompt: "搜索剧名或影片名")
+            .searchFocused($isSearchFocused)
             .onSubmit(of: .search) {
                 Task { await search() }
             }
@@ -286,6 +293,7 @@ struct DanmakuSearchView: View {
 }
 
 struct DanmakuPreferencesForm: View {
+    @FocusState private var isAddressFocused: Bool
     @AppStorage("tvbox.danmakuAPIURL") private var apiAddress = ""
     @AppStorage("tvbox.danmakuEnabled") private var isEnabled = true
     @AppStorage("tvbox.danmakuOpacity") private var opacity = 0.9
@@ -318,6 +326,11 @@ struct DanmakuPreferencesForm: View {
                 ), range: 1...15, suffix: " 行", integer: true)
             }
         }
+        .background {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { isAddressFocused = false }
+        }
         .formStyle(.grouped)
     }
 
@@ -325,12 +338,14 @@ struct DanmakuPreferencesForm: View {
     private func urlField(_ title: String, text: Binding<String>) -> some View {
         #if os(iOS)
         TextField(title, text: text)
+            .focused($isAddressFocused)
             .textFieldStyle(.roundedBorder)
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .keyboardType(.URL)
         #else
         TextField(title, text: text)
+            .focused($isAddressFocused)
             .textFieldStyle(.plain)
             .autocorrectionDisabled()
         #endif
