@@ -84,6 +84,19 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Retry iOS unsigned IPA upload
+        id: upload-ios-retry
+        if: ${{ !cancelled() && steps.upload-ios.outcome == 'failure' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.package-ios.outputs.ipa_name }}
+          path: ${{ runner.temp }}/${{ steps.package-ios.outputs.ipa_name }}
+          archive: false
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Build tvOS
         id: build-tvos
         if: ${{ !cancelled() && steps.resolve-packages.outcome == 'success' }}
@@ -133,29 +146,57 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Retry tvOS unsigned IPA upload
+        id: upload-tvos-retry
+        if: ${{ !cancelled() && steps.upload-tvos.outcome == 'failure' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.package-tvos.outputs.ipa_name }}
+          path: ${{ runner.temp }}/${{ steps.package-tvos.outputs.ipa_name }}
+          archive: false
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Require both unsigned IPAs
         if: ${{ always() }}
         env:
           IOS_BUILD_OUTCOME: ${{ steps.build-ios.outcome }}
           IOS_PACKAGE_OUTCOME: ${{ steps.package-ios.outcome }}
           IOS_UPLOAD_OUTCOME: ${{ steps.upload-ios.outcome }}
+          IOS_UPLOAD_RETRY_OUTCOME: ${{ steps.upload-ios-retry.outcome }}
           TVOS_BUILD_OUTCOME: ${{ steps.build-tvos.outcome }}
           TVOS_PACKAGE_OUTCOME: ${{ steps.package-tvos.outcome }}
           TVOS_UPLOAD_OUTCOME: ${{ steps.upload-tvos.outcome }}
+          TVOS_UPLOAD_RETRY_OUTCOME: ${{ steps.upload-tvos-retry.outcome }}
         run: |
           set -euo pipefail
           failed=0
           for result in \
             "iOS build:$IOS_BUILD_OUTCOME" \
             "iOS package:$IOS_PACKAGE_OUTCOME" \
-            "iOS upload:$IOS_UPLOAD_OUTCOME" \
             "tvOS build:$TVOS_BUILD_OUTCOME" \
-            "tvOS package:$TVOS_PACKAGE_OUTCOME" \
-            "tvOS upload:$TVOS_UPLOAD_OUTCOME"; do
+            "tvOS package:$TVOS_PACKAGE_OUTCOME"; do
             step="${result%%:*}"
             outcome="${result#*:}"
             echo "$step: $outcome"
             if [[ "$outcome" != "success" ]]; then
+              failed=1
+            fi
+          done
+          for platform in iOS tvOS; do
+            if [[ "$platform" == "iOS" ]]; then
+              first_upload="$IOS_UPLOAD_OUTCOME"
+              retry_upload="$IOS_UPLOAD_RETRY_OUTCOME"
+            else
+              first_upload="$TVOS_UPLOAD_OUTCOME"
+              retry_upload="$TVOS_UPLOAD_RETRY_OUTCOME"
+            fi
+            if [[ "$first_upload" == "success" || "$retry_upload" == "success" ]]; then
+              echo "$platform upload: success (attempts: $first_upload, $retry_upload)"
+            else
+              echo "$platform upload: failure (attempts: $first_upload, $retry_upload)"
               failed=1
             fi
           done
