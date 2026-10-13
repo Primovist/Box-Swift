@@ -120,7 +120,9 @@ struct HomeView: View {
                     selectedSectionContent(for: tab, wide: wide)
                         .navigationTitle("搜索")
                         .searchable(text: $searchText, prompt: "搜索片名")
+                        #if os(iOS)
                         .searchFocused($isSearchFocused)
+                        #endif
                         .searchScopes($searchAcrossSites) {
                             Text("全站").tag(true)
                             Text("本站").tag(false)

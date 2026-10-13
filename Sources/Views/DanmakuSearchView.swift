@@ -89,7 +89,9 @@ struct DanmakuSearchView: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .searchable(text: $query, prompt: "搜索剧名或影片名")
+            #if os(iOS)
             .searchFocused($isSearchFocused)
+            #endif
             .onSubmit(of: .search) {
                 Task { await search() }
             }
