@@ -206,6 +206,10 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     private var pendingPositionSeekOriginFraction: Double?
     private var pendingPositionSeekOriginMilliseconds: Double?
     private var pendingDanmakuSeekStartedAt: TimeInterval?
+    private var lateDanmakuSeekTargetMilliseconds: Double?
+    private var lateDanmakuSeekOriginMilliseconds: Double?
+    private var lateDanmakuSeekLastSampleMilliseconds: Double?
+    private var lateDanmakuSeekLastSampleUptime: TimeInterval?
     private var latePositionSeekTargetFraction: Double?
     private var latePositionSeekOriginFraction: Double?
     private var latePositionSeekOriginMilliseconds: Double?
@@ -382,6 +386,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         guard duration > 0 || player.isSeekable else { return }
         guard duration > 0 else {
             clearPendingDanmakuSeek()
+            clearLateDanmakuSeek()
             clearPositionSeek()
             pendingPositionSeekTargetFraction = boundedFraction
             pendingPositionSeekOriginFraction = Double(player.position)
@@ -780,6 +785,33 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
             return
         }
 
+        if let target = lateDanmakuSeekTargetMilliseconds {
+            var confirmedSeekSample = abs(sample - target) <= 750
+            if let origin = lateDanmakuSeekOriginMilliseconds,
+               let previousSample = lateDanmakuSeekLastSampleMilliseconds,
+               let previousSampleUptime = lateDanmakuSeekLastSampleUptime {
+                let isAdvancing = isPlaying && !isDanmakuBuffering
+                let previousElapsed = isAdvancing
+                    ? max(0, now - previousSampleUptime) * 1_000 * Double(playbackRate)
+                    : 0
+                let sampledChange = sample - previousSample
+                let seekDirection = target - origin
+                let movedInSeekDirection = seekDirection < 0
+                    ? sampledChange < -750
+                    : (seekDirection > 0 ? sampledChange > previousElapsed + 1_500 : false)
+                confirmedSeekSample = confirmedSeekSample || movedInSeekDirection
+            }
+
+            if confirmedSeekSample {
+                clearLateDanmakuSeek()
+                anchorDanmakuClock(to: sample, at: now)
+                return
+            }
+
+            lateDanmakuSeekLastSampleMilliseconds = sample
+            lateDanmakuSeekLastSampleUptime = now
+        }
+
         if let seekTarget = pendingDanmakuSeekTargetMilliseconds {
             var confirmedSeekSample = abs(sample - seekTarget) <= 750
             if let origin = danmakuSeekOriginMilliseconds,
@@ -798,6 +830,16 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
             }
 
             if confirmedSeekSample {
+                clearPendingDanmakuSeek()
+                anchorDanmakuClock(to: sample, at: now)
+                return
+            }
+
+            if now - (pendingDanmakuSeekStartedAt ?? now) >= 3 {
+                lateDanmakuSeekTargetMilliseconds = seekTarget
+                lateDanmakuSeekOriginMilliseconds = danmakuSeekOriginMilliseconds
+                lateDanmakuSeekLastSampleMilliseconds = sample
+                lateDanmakuSeekLastSampleUptime = now
                 clearPendingDanmakuSeek()
                 anchorDanmakuClock(to: sample, at: now)
                 return
@@ -835,6 +877,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     ) {
         let now = ProcessInfo.processInfo.systemUptime
         let position = Double(max(0, milliseconds))
+        clearLateDanmakuSeek()
         clearPositionSeek()
         anchorDanmakuClock(
             to: position,
@@ -854,6 +897,13 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         danmakuSeekOriginMilliseconds = nil
         danmakuSeekLastSampleMilliseconds = nil
         danmakuSeekLastSampleUptime = nil
+    }
+
+    private func clearLateDanmakuSeek() {
+        lateDanmakuSeekTargetMilliseconds = nil
+        lateDanmakuSeekOriginMilliseconds = nil
+        lateDanmakuSeekLastSampleMilliseconds = nil
+        lateDanmakuSeekLastSampleUptime = nil
     }
 
     private func clearPendingPositionSeek() {
@@ -1032,6 +1082,7 @@ struct PlayerScreen: View {
                             .allowsHitTesting(false)
                             .zIndex(0)
                         DanmakuOverlay(clock: session.danmakuClock, comments: danmakuComments, generation: danmakuGeneration)
+                            .id("\(session.playbackGeneration)-\(danmakuGeneration)")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .allowsHitTesting(false)
                             .zIndex(1)
@@ -1085,7 +1136,11 @@ struct PlayerScreen: View {
                         }
 
                         if !isPortraitLayout, let landscapeLivePanel {
-                            liveLandscapePanel(landscapeLivePanel, size: geometry.size)
+                            liveLandscapePanel(
+                                landscapeLivePanel,
+                                size: geometry.size,
+                                safeAreaInsets: geometry.safeAreaInsets
+                            )
                                 .zIndex(3)
                         }
                     }
@@ -1942,30 +1997,42 @@ struct PlayerScreen: View {
         .disabled(target == nil)
     }
 
-    private func liveLandscapePanel(_ panel: LivePlayerPanel, size: CGSize) -> some View {
+    private func liveLandscapePanel(
+        _ panel: LivePlayerPanel,
+        size: CGSize,
+        safeAreaInsets: EdgeInsets
+    ) -> some View {
         ZStack(alignment: panel == .guide ? .leading : .trailing) {
-            liveSidePanel(panel, size: size)
+            liveSidePanel(panel, size: size, safeAreaInsets: safeAreaInsets)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(
+            maxWidth: .infinity,
+            maxHeight: .infinity,
+            alignment: panel == .guide ? .leading : .trailing
+        )
         .transition(.move(edge: panel == .guide ? .leading : .trailing).combined(with: .opacity))
     }
 
-    private func liveSidePanel(_ panel: LivePlayerPanel, size: CGSize) -> some View {
-        VStack(spacing: 10) {
+    private func liveSidePanel(
+        _ panel: LivePlayerPanel,
+        size: CGSize,
+        safeAreaInsets: EdgeInsets
+    ) -> some View {
+        return VStack(spacing: 10) {
             Text(panel.rawValue)
                 .font(.headline)
                 .frame(maxWidth: .infinity, alignment: .leading)
             livePanelContent(panel)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .padding(14)
-        .frame(
-            width: panel == .guide
-                ? min(max(size.width * 0.78, 560), 1_000)
-                : min(max(size.width * 0.32, 280), 390),
-            height: size.height,
-            alignment: .top
-        )
+        .padding(.top, 14 + safeAreaInsets.top)
+        .padding(.bottom, 14 + safeAreaInsets.bottom)
+        .padding(.leading, 14 + (panel == .guide ? safeAreaInsets.leading : 0))
+        .padding(.trailing, 14 + (panel == .sources ? safeAreaInsets.trailing : 0))
+        .frame(width: panel == .guide
+            ? min(max(size.width * 0.78, 560), 1_000)
+            : min(max(size.width * 0.32, 280), 390))
+        .frame(maxHeight: .infinity, alignment: .top)
         .background(.ultraThinMaterial)
         .foregroundStyle(Color(uiColor: .label))
         .contentShape(Rectangle())

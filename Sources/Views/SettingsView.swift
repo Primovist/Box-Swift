@@ -21,27 +21,56 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section {
-                urlField("https://example.com/tvbox.json", text: $endpoint)
+                VStack(spacing: 10) {
+                    urlField("https://example.com/tvbox.json", text: $endpoint)
+                    Divider()
+                    Button {
+                        Task { await catalog.loadConfiguration(from: endpoint, restoreRemovedSites: true) }
+                    } label: {
+                        Group {
+                            if catalog.isLoading {
+                                ProgressView()
+                            } else {
+                                Text("载入配置")
+                            }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 20, alignment: .center)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityLabel(catalog.isLoading ? "正在载入配置" : "载入配置")
+                    .disabled(catalog.isLoading || endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                Button {
-                    Task { await catalog.loadConfiguration(from: endpoint, restoreRemovedSites: true) }
-                } label: {
-                    Group {
-                        if catalog.isLoading {
-                            ProgressView()
-                        } else {
-                            Text("载入配置")
+                    if !catalog.savedSourceURLs.isEmpty {
+                        Divider()
+                        Menu {
+                            ForEach(catalog.savedSourceURLs, id: \.self) { address in
+                                Button {
+                                    endpoint = address
+                                    Task { await catalog.loadConfiguration(from: address) }
+                                } label: {
+                                    if address == catalog.sourceURL {
+                                        Label(address, systemImage: "checkmark")
+                                    } else {
+                                        Text(address)
+                                    }
+                                }
+                            }
+                        } label: {
+                            HStack {
+                                Label("已登记服务器", systemImage: "server.rack")
+                                Spacer()
+                                Text("\(catalog.savedSourceURLs.count)")
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
-                    .frame(maxWidth: .infinity, minHeight: 20, alignment: .center)
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityLabel(catalog.isLoading ? "正在载入配置" : "载入配置")
-                .disabled(catalog.isLoading || endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                Button("恢复演示数据…", role: .destructive) {
-                    isConfirmingRestore = true
+                    Divider()
+                    Button("恢复演示数据…", role: .destructive) {
+                        isConfirmingRestore = true
+                    }
                 }
+                .listRowSeparator(.hidden)
             } header: {
                 Text("片源配置")
             } footer: {

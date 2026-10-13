@@ -15,7 +15,7 @@ struct DanmakuOverlay: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let key = layoutKey(for: geometry.size)
+            let key = layoutKey(for: geometry.size, comments: comments)
             let clockRevision = clock.revision
             TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isEnabled || !clock.isAdvancing || placements.isEmpty)) { timeline in
                 let frameUptime = ProcessInfo.processInfo.systemUptime + timeline.date.timeIntervalSinceNow
@@ -41,8 +41,8 @@ struct DanmakuOverlay: View {
         .accessibilityHidden(true)
     }
 
-    private func layoutKey(for size: CGSize) -> String {
-        "\(generation)-\(Int(size.width.rounded()))-\(Int(size.height.rounded()))-\(sizeScale)-\(speed)-\(maxLines)"
+    private func layoutKey(for size: CGSize, comments: [DanmakuComment]) -> String {
+        "\(generation)-\(comments.count)-\(Int(size.width.rounded()))-\(Int(size.height.rounded()))-\(sizeScale)-\(speed)-\(maxLines)"
     }
 
     private func visibleLaneCount(for size: CGSize) -> Int {
