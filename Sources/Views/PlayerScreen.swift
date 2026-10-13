@@ -41,9 +41,19 @@ private enum LivePlayerPanel: String, Equatable, Identifiable {
     var id: String { rawValue }
 }
 
+private enum LivePortraitTab: String, CaseIterable, Identifiable {
+    case groups = "分类"
+    case channels = "频道"
+    case programs = "节目"
+    case sources = "线路"
+
+    var id: String { rawValue }
+}
+
 #if os(iOS)
 @MainActor
 private final class SystemVolumeController: ObservableObject {
+    private weak var volumeView: MPVolumeView?
     private weak var slider: UISlider?
 
     var volume: Double {
@@ -51,14 +61,23 @@ private final class SystemVolumeController: ObservableObject {
     }
 
     func attach(to volumeView: MPVolumeView) {
-        slider = volumeView.subviews.compactMap { $0 as? UISlider }.first
+        self.volumeView = volumeView
+        slider = findVolumeSlider(in: volumeView)
     }
 
     func setVolume(_ value: Double) {
+        if slider == nil, let volumeView { attach(to: volumeView) }
         guard let slider else { return }
         slider.setValue(Float(min(1, max(0, value / 100))), animated: false)
-        slider.sendActions(for: .touchUpInside)
         slider.sendActions(for: .valueChanged)
+    }
+
+    private func findVolumeSlider(in view: UIView) -> UISlider? {
+        if let slider = view as? UISlider { return slider }
+        for subview in view.subviews {
+            if let slider = findVolumeSlider(in: subview) { return slider }
+        }
+        return nil
     }
 }
 
@@ -68,7 +87,12 @@ private struct SystemVolumeControl: UIViewRepresentable {
     func makeUIView(context: Context) -> MPVolumeView {
         let volumeView = MPVolumeView(frame: .zero)
         volumeView.showsRouteButton = false
-        Task { @MainActor in controller.attach(to: volumeView) }
+        controller.attach(to: volumeView)
+        let controller = self.controller
+        Task { @MainActor [weak volumeView, weak controller] in
+            await Task.yield()
+            if let volumeView { controller?.attach(to: volumeView) }
+        }
         return volumeView
     }
 
@@ -957,7 +981,11 @@ struct PlayerScreen: View {
     @State private var touchStartBrightness = 0.0
     @State private var touchStartVolume = 0.0
     @State private var landscapeLivePanel: LivePlayerPanel?
+    @State private var livePortraitTab: LivePortraitTab = .channels
+    @State private var selectedLiveGroupID: String?
     @State private var liveGuideDate = Calendar.current.startOfDay(for: Date())
+    @State private var liveGuideClock = Date()
+    @State private var lastScrolledLiveProgramID: String?
     @State private var livePrograms: [TVBoxEPGProgram] = []
     @State private var isLoadingLiveGuide = false
     @State private var liveGuideMessage: String?
@@ -967,6 +995,12 @@ struct PlayerScreen: View {
     @AppStorage("tvbox.aspectRatio") private var savedAspectRatio = ""
     private let historySaveTimer = Timer.publish(every: 10, on: .main, in: .common).autoconnect()
     private var liveContext: LivePlaybackContext? { session.request.liveContext }
+    private var selectedLiveGroup: TVBoxLiveGroup? {
+        guard let groups = liveContext?.groups else { return nil }
+        return groups.first(where: { $0.id == selectedLiveGroupID })
+            ?? liveContext?.currentGroup
+            ?? groups.first
+    }
     private var liveGuideTaskKey: String {
         guard let liveContext else { return "" }
         return "\(liveContext.groupID)|\(liveContext.channelID)|\(liveGuideDate.timeIntervalSince1970)"
@@ -975,6 +1009,7 @@ struct PlayerScreen: View {
     @FocusState private var playControlFocused: Bool
     @FocusState private var progressFocused: Bool
     @FocusState private var playerSurfaceFocused: Bool
+    @FocusState private var livePanelFocusTarget: String?
     #endif
 
     init(request: PlaybackRequest) {
@@ -1045,7 +1080,7 @@ struct PlayerScreen: View {
                                 .padding(.bottom, playerPadding(compact: geometry.size.width < 600))
                                 #endif
                             }
-                            .transition(.opacity)
+                            .transition(session.request.liveContext != nil && !isPortraitLayout ? .identity : .opacity)
                             .zIndex(2)
                         }
 
@@ -1096,7 +1131,7 @@ struct PlayerScreen: View {
                 #endif
 
                 #if os(tvOS)
-                if !areControlsVisible {
+                if !areControlsVisible && landscapeLivePanel == nil {
                     Button { revealControls() } label: {
                         Color.clear
                             .contentShape(Rectangle())
@@ -1134,6 +1169,7 @@ struct PlayerScreen: View {
         .onAppear {
             let option = Self.aspectRatios.first { $0.value == savedAspectRatio }
             session.setAspectRatio(option?.value.isEmpty == false ? option?.value : nil, label: option?.label ?? "原始")
+            focusLiveGuideDateForPlayback()
             session.play()
             loadEpisodeDanmaku()
             #if os(tvOS)
@@ -1150,13 +1186,29 @@ struct PlayerScreen: View {
             interactionHUDTask?.cancel()
             session.stop()
         }
-        .onReceive(historySaveTimer) { _ in persistPlaybackPosition() }
+        .onReceive(historySaveTimer) { _ in
+            let calendar = liveGuideCalendar
+            let previousDay = calendar.startOfDay(for: liveGuideClock)
+            let wasFollowingLiveToday = session.request.isLive
+                && session.request.catchupWindow == nil
+                && calendar.isDate(liveGuideDate, inSameDayAs: previousDay)
+            let currentTime = Date()
+            liveGuideClock = currentTime
+            let currentDay = calendar.startOfDay(for: currentTime)
+            if wasFollowingLiveToday && !calendar.isDate(previousDay, inSameDayAs: currentDay) {
+                liveGuideDate = currentDay
+            }
+            persistPlaybackPosition()
+        }
         .onChange(of: session.didReachEnd) { _, reachedEnd in
             guard reachedEnd, autoNextEpisode, !session.request.isLive, session.request.liveContext == nil,
                   session.request.queueIndex + 1 < session.request.queue.count else { return }
             moveToEpisode(1)
         }
-        .onChange(of: session.playbackGeneration) { _, _ in loadEpisodeDanmaku() }
+        .onChange(of: session.playbackGeneration) { _, _ in
+            focusLiveGuideDateForPlayback()
+            loadEpisodeDanmaku()
+        }
         .onChange(of: danmakuEnabled) { _, enabled in
             if enabled {
                 if skipNextDanmakuEnableReload {
@@ -1279,7 +1331,6 @@ struct PlayerScreen: View {
 #if os(tvOS)
         .onExitCommand {
             if landscapeLivePanel != nil {
-                landscapeLivePanel = nil
                 revealControls()
             } else if areControlsVisible {
                 controlsHideTask?.cancel()
@@ -1296,7 +1347,6 @@ struct PlayerScreen: View {
             session.togglePlayback()
             revealControls()
         }
-        .onMoveCommand { _ in revealControls() }
         #endif
     }
 
@@ -1315,7 +1365,13 @@ struct PlayerScreen: View {
                         handleDoubleTap(at: value.location.x, width: size.width)
                     case .second(let value):
                         if session.request.liveContext != nil && !isPortraitLayout {
-                            if value.location.x < size.width * 0.28 {
+                            if landscapeLivePanel != nil {
+                                controlsHideTask?.cancel()
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    landscapeLivePanel = nil
+                                    areControlsVisible = false
+                                }
+                            } else if value.location.x < size.width * 0.28 {
                                 toggleLivePanel(.guide)
                             } else if value.location.x > size.width * 0.72 {
                                 toggleLivePanel(.sources)
@@ -1425,6 +1481,10 @@ struct PlayerScreen: View {
 
     @MainActor
     private func toggleControlsVisibility() {
+        if landscapeLivePanel != nil {
+            revealControls()
+            return
+        }
         if areControlsVisible {
             controlsHideTask?.cancel()
             withAnimation(.easeInOut(duration: 0.2)) { areControlsVisible = false }
@@ -1435,6 +1495,16 @@ struct PlayerScreen: View {
 
     @MainActor
     private func revealControls() {
+        if landscapeLivePanel != nil {
+            controlsHideTask?.cancel()
+            withAnimation(.easeInOut(duration: 0.2)) { landscapeLivePanel = nil }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 220_000_000)
+                guard landscapeLivePanel == nil else { return }
+                revealControls()
+            }
+            return
+        }
         let wasHidden = !areControlsVisible
         withAnimation(.easeInOut(duration: 0.2)) { areControlsVisible = true }
         controlsHideTask?.cancel()
@@ -1513,39 +1583,96 @@ struct PlayerScreen: View {
 
     private var livePortraitPanels: some View {
         VStack(spacing: 12) {
-            livePortraitSourceSelector
-            liveGuideContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            Picker("直播导航", selection: $livePortraitTab) {
+                ForEach(LivePortraitTab.allCases) { tab in
+                    Text(tab.rawValue).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Group {
+                switch livePortraitTab {
+                case .groups: liveGroupContent
+                case .channels: liveChannelContent
+                case .programs: liveGuideContent
+                case .sources: liveSourceContent
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .padding(14)
         .background(Color.tvboxSurface)
         .foregroundStyle(Color(uiColor: .label))
     }
 
-    private var livePortraitSourceSelector: some View {
-        HStack(spacing: 10) {
-            Text("线路")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(liveContext?.currentChannel?.sources ?? []) { source in
-                        let isSelected = source.id == liveContext?.sourceID
+    private var liveGroupContent: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(liveContext?.groups ?? []) { group in
+                    Button {
+                        selectedLiveGroupID = group.id
+                        livePortraitTab = .channels
+                    } label: {
+                        HStack {
+                            Text(group.name)
+                                .foregroundStyle(Color(uiColor: .label))
+                            Spacer()
+                            Text("\(group.channels.count)")
+                                .foregroundStyle(Color(uiColor: .secondaryLabel))
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(group.id == selectedLiveGroup?.id ? Color.tvboxAccent.opacity(0.14) : .clear)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    Divider()
+                }
+            }
+        }
+    }
+
+    private var liveChannelContent: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                if let group = selectedLiveGroup {
+                    ForEach(group.channels) { channel in
                         Button {
-                            selectLiveSource(source)
+                            selectLiveChannel(channel, group: group)
                         } label: {
-                            HStack(spacing: 5) {
-                                if isSelected { Image(systemName: "checkmark") }
-                                Text(source.name).lineLimit(1)
+                            HStack(spacing: 12) {
+                                Group {
+                                    if let logoURL = channel.logoURL {
+                                        CachedArtworkImage(url: logoURL, contentMode: .fit)
+                                    } else {
+                                        Image(systemName: "dot.radiowaves.left.and.right")
+                                            .foregroundStyle(Color.tvboxAccent)
+                                    }
+                                }
+                                .frame(width: 38, height: 38)
+                                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                                Text(channel.name)
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(Color(uiColor: .label))
+                                    .lineLimit(1)
+                                Spacer(minLength: 8)
+                                if channel.id == liveContext?.channelID && group.id == liveContext?.groupID {
+                                    Image(systemName: "waveform")
+                                        .foregroundStyle(Color.tvboxAccent)
+                                }
                             }
-                            .font(.system(size: 12, weight: .medium))
-                            .padding(.horizontal, 11)
-                            .padding(.vertical, 8)
-                            .foregroundStyle(isSelected ? Color.white : Color(uiColor: .label))
-                            .background(isSelected ? Color.tvboxAccent : Color.tvboxSurface, in: Capsule())
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        #if os(tvOS)
+                        .focused($livePanelFocusTarget, equals: "channel:\(group.id):\(channel.id)")
+                        #endif
                         .disabled(isSwitchingEpisode)
+                        Divider()
                     }
                 }
             }
@@ -1556,29 +1683,128 @@ struct PlayerScreen: View {
     private func livePanelContent(_ panel: LivePlayerPanel) -> some View {
         switch panel {
         case .guide:
-            liveGuideContent
+            liveLandscapeGuideContent
         case .sources:
             liveSourceContent
         }
     }
 
+    private var liveLandscapeGuideContent: some View {
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("分类")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color(uiColor: .secondaryLabel))
+                ScrollView {
+                    LazyVStack(spacing: 4) {
+                        ForEach(liveContext?.groups ?? []) { group in
+                            Button {
+                                selectedLiveGroupID = group.id
+                            } label: {
+                                Text(group.name)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .lineLimit(2)
+                                    .foregroundStyle(Color(uiColor: .label))
+                                    .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
+                                    .padding(.horizontal, 9)
+                                    .background(group.id == selectedLiveGroup?.id ? Color.tvboxAccent.opacity(0.18) : .clear,
+                                                in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .frame(width: 112, alignment: .topLeading)
+
+            Divider().padding(.horizontal, 8)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("频道")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color(uiColor: .secondaryLabel))
+                ScrollView {
+                    LazyVStack(spacing: 4) {
+                        ForEach(selectedLiveGroup?.channels ?? []) { channel in
+                            Button {
+                                if let group = selectedLiveGroup {
+                                    selectLiveChannel(channel, group: group)
+                                }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    if let logoURL = channel.logoURL {
+                                        CachedArtworkImage(url: logoURL, contentMode: .fit)
+                                            .frame(width: 30, height: 30)
+                                    }
+                                    Text(channel.name)
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .lineLimit(1)
+                                    Spacer(minLength: 0)
+                                    if channel.id == liveContext?.channelID && selectedLiveGroup?.id == liveContext?.groupID {
+                                        Image(systemName: "waveform")
+                                            .font(.caption)
+                                            .foregroundStyle(Color.tvboxAccent)
+                                    }
+                                }
+                                .foregroundStyle(Color(uiColor: .label))
+                                .padding(.horizontal, 8)
+                                .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
+                                .background(channel.id == liveContext?.channelID && selectedLiveGroup?.id == liveContext?.groupID
+                                            ? Color.tvboxAccent.opacity(0.18) : .clear,
+                                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                            #if os(tvOS)
+                            .focused($livePanelFocusTarget, equals: "channel:\(selectedLiveGroup?.id ?? ""):\(channel.id)")
+                            #endif
+                            .disabled(isSwitchingEpisode)
+                        }
+                    }
+                }
+            }
+            .frame(width: 148, alignment: .topLeading)
+
+            Divider().padding(.horizontal, 8)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("节目")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color(uiColor: .secondaryLabel))
+                liveGuideContent
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
     private var liveGuideContent: some View {
         VStack(spacing: 10) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(liveGuideDates, id: \.self) { date in
-                        let isSelected = Calendar.current.isDate(date, inSameDayAs: liveGuideDate)
-                        Button {
-                            liveGuideDate = date
-                        } label: {
-                            Text(liveDateTitle(date))
-                                .font(.system(size: 12, weight: .semibold))
-                                .padding(.horizontal, 13)
-                                .padding(.vertical, 8)
-                                .foregroundStyle(isSelected ? Color.white : Color(uiColor: .label))
-                                .background(isSelected ? Color.tvboxAccent : Color.tvboxSurface, in: Capsule())
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(liveGuideDates, id: \.self) { date in
+                            let isSelected = liveGuideCalendar.isDate(date, inSameDayAs: liveGuideDate)
+                            Button {
+                                liveGuideDate = date
+                            } label: {
+                                Text(liveDateTitle(date))
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .padding(.horizontal, 13)
+                                    .padding(.vertical, 8)
+                                    .foregroundStyle(isSelected ? Color.white : Color(uiColor: .label))
+                                    .background(isSelected ? Color.tvboxAccent : Color.tvboxSurface, in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .id(date)
                         }
-                        .buttonStyle(.plain)
+                    }
+                }
+                .onAppear {
+                    focusLiveGuideDateForPlayback()
+                    proxy.scrollTo(liveGuideCalendar.startOfDay(for: liveGuideDate), anchor: .center)
+                }
+                .onChange(of: liveGuideDate) { _, date in
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        proxy.scrollTo(liveGuideCalendar.startOfDay(for: date), anchor: .center)
                     }
                 }
             }
@@ -1594,16 +1820,32 @@ struct PlayerScreen: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(livePrograms) { program in
-                            liveProgramRow(program)
-                            Divider().overlay(Color.primary.opacity(0.10))
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(livePrograms) { program in
+                                liveProgramRow(program)
+                                    .id(program.id)
+                                Divider().overlay(Color.primary.opacity(0.10))
+                            }
                         }
+                    }
+                    .onAppear {
+                        scrollToPlayingProgram(using: proxy, animated: false)
+                    }
+                    .onChange(of: livePrograms) { _, _ in
+                        scrollToPlayingProgram(using: proxy)
+                    }
+                    .onChange(of: session.playbackGeneration) { _, _ in
+                        scrollToPlayingProgram(using: proxy)
+                    }
+                    .onChange(of: liveGuideClock) { _, _ in
+                        scrollToPlayingProgram(using: proxy, onlyIfChanged: true)
                     }
                 }
             }
         }
+        .onAppear(perform: focusLiveGuideDateForPlayback)
     }
 
     private var liveSourceContent: some View {
@@ -1633,6 +1875,9 @@ struct PlayerScreen: View {
                             .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
                         .buttonStyle(.plain)
+                        #if os(tvOS)
+                        .focused($livePanelFocusTarget, equals: "source:\(source.id)")
+                        #endif
                         .disabled(isSwitchingEpisode)
                     }
                 }
@@ -1642,6 +1887,15 @@ struct PlayerScreen: View {
 
     private func liveProgramRow(_ program: TVBoxEPGProgram) -> some View {
         let target = liveProgramTarget(for: program)
+        let interval = program.interval(on: liveGuideDate)
+        let isPlaying = isPlayingLiveProgram(program)
+        let status: String = {
+            if target?.isLive == true { return isPlaying ? "正在直播" : "直播" }
+            if target != nil { return isPlaying ? "正在回放" : "回放" }
+            if let interval, liveGuideClock < interval.start { return "未开始" }
+            return "不可回放"
+        }()
+        let statusColor = isPlaying ? Color.tvboxAccent : Color(uiColor: .secondaryLabel)
         return Button {
             guard let target, let context = liveContext else { return }
             if let request = context.request(
@@ -1673,12 +1927,15 @@ struct PlayerScreen: View {
                         .foregroundStyle(Color(uiColor: .secondaryLabel))
                 }
                 Spacer(minLength: 4)
-                Text(target?.isLive == true ? "直播中" : (target == nil ? "未提供回看" : "回看"))
+                Text(status)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(target == nil ? Color(uiColor: .secondaryLabel) : Color.tvboxAccent)
+                    .foregroundStyle(target == nil ? Color(uiColor: .secondaryLabel) : statusColor)
                     .lineLimit(1)
             }
             .padding(.vertical, 11)
+            .padding(.horizontal, 10)
+            .background(isPlaying ? Color.tvboxAccent.opacity(0.14) : .clear,
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1687,14 +1944,7 @@ struct PlayerScreen: View {
 
     private func liveLandscapePanel(_ panel: LivePlayerPanel, size: CGSize) -> some View {
         ZStack(alignment: panel == .guide ? .leading : .trailing) {
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    guard let panel = landscapeLivePanel else { return }
-                    toggleLivePanel(panel)
-                }
             liveSidePanel(panel, size: size)
-                .padding(.horizontal, playerPadding(compact: size.width < 700))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .transition(.move(edge: panel == .guide ? .leading : .trailing).combined(with: .opacity))
@@ -1709,11 +1959,16 @@ struct PlayerScreen: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .padding(14)
-        .frame(width: min(max(size.width * 0.32, 280), 390), height: size.height * 0.84)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(.white.opacity(0.12), lineWidth: 1))
+        .frame(
+            width: panel == .guide
+                ? min(max(size.width * 0.78, 560), 1_000)
+                : min(max(size.width * 0.32, 280), 390),
+            height: size.height,
+            alignment: .top
+        )
+        .background(.ultraThinMaterial)
         .foregroundStyle(Color(uiColor: .label))
-        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .contentShape(Rectangle())
         .simultaneousGesture(TapGesture().onEnded { })
         .accessibilityAction(.escape) { toggleLivePanel(panel) }
         #if os(tvOS)
@@ -1722,17 +1977,67 @@ struct PlayerScreen: View {
     }
 
     private var liveGuideDates: [Date] {
-        let calendar = Calendar(identifier: .gregorian)
-        let today = calendar.startOfDay(for: Date())
-        return (-6...1).compactMap { calendar.date(byAdding: .day, value: $0, to: today) }
+        let calendar = liveGuideCalendar
+        let today = calendar.startOfDay(for: liveGuideClock)
+        var dates = (-6...1).compactMap { calendar.date(byAdding: .day, value: $0, to: today) }
+        if let replayDate = session.request.catchupWindow?.start {
+            let replayDay = calendar.startOfDay(for: replayDate)
+            if !dates.contains(where: { calendar.isDate($0, inSameDayAs: replayDay) }) {
+                dates.append(replayDay)
+                dates.sort()
+            }
+        }
+        return dates
+    }
+
+    private var liveGuideCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
+        return calendar
+    }
+
+    private func focusLiveGuideDateForPlayback() {
+        guard liveContext != nil else { return }
+        let playbackDate = session.request.catchupWindow?.start ?? liveGuideClock
+        let day = liveGuideCalendar.startOfDay(for: playbackDate)
+        guard !liveGuideCalendar.isDate(liveGuideDate, inSameDayAs: day) else { return }
+        liveGuideDate = day
+    }
+
+    private func isPlayingLiveProgram(_ program: TVBoxEPGProgram) -> Bool {
+        guard let context = liveContext,
+              session.request.liveContext?.groupID == context.groupID,
+              session.request.liveContext?.channelID == context.channelID,
+              let interval = program.interval(on: liveGuideDate) else { return false }
+        if let window = session.request.catchupWindow {
+            return abs(window.start.timeIntervalSince(interval.start)) < 60
+                && abs(window.end.timeIntervalSince(interval.end)) < 60
+        }
+        guard session.request.isLive else { return false }
+        let now = liveGuideClock
+        return interval.start <= now && now < interval.end
+    }
+
+    private func scrollToPlayingProgram(using proxy: ScrollViewProxy, animated: Bool = true, onlyIfChanged: Bool = false) {
+        guard let program = livePrograms.first(where: isPlayingLiveProgram) else { return }
+        guard !onlyIfChanged || lastScrolledLiveProgramID != program.id else { return }
+        lastScrolledLiveProgramID = program.id
+        if animated {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                proxy.scrollTo(program.id, anchor: .center)
+            }
+        } else {
+            proxy.scrollTo(program.id, anchor: .center)
+        }
     }
 
     private func liveDateTitle(_ date: Date) -> String {
-        let calendar = Calendar.current
+        let calendar = liveGuideCalendar
         if calendar.isDateInToday(date) { return "今天" }
         if calendar.isDateInTomorrow(date) { return "明天" }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = liveGuideCalendar.timeZone
         formatter.dateFormat = "M/d EEE"
         return formatter.string(from: date)
     }
@@ -1772,7 +2077,7 @@ struct PlayerScreen: View {
               let channel = context.currentChannel,
               let source = context.currentSource,
               let interval = program.interval(on: liveGuideDate) else { return nil }
-        let now = Date()
+        let now = liveGuideClock
         if now < interval.start { return nil }
         if now < interval.end {
             guard let url = URL(string: source.address), Self.isSupportedStreamURL(url) else { return nil }
@@ -1797,18 +2102,54 @@ struct PlayerScreen: View {
         isSwitchingEpisode = true
         session.replace(with: request)
         isSwitchingEpisode = false
+        #if os(tvOS)
+        livePanelFocusTarget = "source:\(source.id)"
+        #endif
+    }
+
+    private func selectLiveChannel(_ channel: TVBoxLiveChannel, group: TVBoxLiveGroup) {
+        guard let context = liveContext else { return }
+        selectedLiveGroupID = group.id
+        guard !(group.id == context.groupID && channel.id == context.channelID && session.request.isLive) else { return }
+        guard let source = channel.sources.first(where: { source in
+            guard let url = URL(string: source.address) else { return false }
+            return Self.isSupportedStreamURL(url)
+        }),
+        let request = context.request(groupID: group.id, channelID: channel.id, sourceID: source.id) else { return }
+        isSwitchingEpisode = true
+        session.replace(with: request)
+        isSwitchingEpisode = false
+        #if os(tvOS)
+        livePanelFocusTarget = "channel:\(group.id):\(channel.id)"
+        #endif
     }
 
     private func toggleLivePanel(_ panel: LivePlayerPanel) {
         if landscapeLivePanel == panel {
-            landscapeLivePanel = nil
-            revealControls()
-        } else {
-            landscapeLivePanel = panel
             controlsHideTask?.cancel()
-            withAnimation(.easeInOut(duration: 0.2)) { areControlsVisible = true }
+            withAnimation(.easeInOut(duration: 0.2)) {
+                landscapeLivePanel = nil
+                areControlsVisible = false
+            }
+        } else {
+            controlsHideTask?.cancel()
+            if panel == .guide, let currentGroupID = liveContext?.groupID {
+                selectedLiveGroupID = currentGroupID
+            }
+            withAnimation(.easeInOut(duration: 0.2)) {
+                landscapeLivePanel = panel
+                areControlsVisible = false
+            }
             #if os(tvOS)
             playerSurfaceFocused = false
+            Task { @MainActor in
+                await Task.yield()
+                if panel == .guide, let context = liveContext, let channel = context.currentChannel {
+                    livePanelFocusTarget = "channel:\(context.groupID):\(channel.id)"
+                } else if let source = liveContext?.currentSource {
+                    livePanelFocusTarget = "source:\(source.id)"
+                }
+            }
             #endif
         }
     }
