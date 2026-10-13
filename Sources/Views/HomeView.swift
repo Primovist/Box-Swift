@@ -30,7 +30,7 @@ private struct ScrollBounceConfigurator: UIViewRepresentable {
         uiView.updateScrollView()
     }
 
-    private final class ScrollBounceProbeView: UIView {
+    final class ScrollBounceProbeView: UIView {
         var isDisabled: Bool
 
         init(isDisabled: Bool) {
@@ -232,7 +232,9 @@ struct HomeView: View {
             #endif
         }
         .id(section)
+        #if os(tvOS)
         .scrollBounceBehavior(.basedOnSize)
+        #endif
         .transition(.opacity)
         #if os(iOS)
         .onScrollGeometryChange(for: HomeScrollMetrics.self) { geometry in
