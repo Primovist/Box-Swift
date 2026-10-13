@@ -1386,6 +1386,8 @@ struct PlayerScreen: View {
             } label: {
                 playbackRateLabel
             }
+            .buttonStyle(PlayerControlButtonStyle())
+            .accessibilityLabel("播放速度：\(session.playbackRate == 1 ? "正常速度" : Self.rateLabel(Double(session.playbackRate)))")
             #else
             Menu {
                 ForEach([0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { rate in
@@ -1396,9 +1398,9 @@ struct PlayerScreen: View {
             } label: {
                 playbackRateLabel
             }
-            #endif
             .buttonStyle(PlayerControlButtonStyle())
             .accessibilityLabel("播放速度：\(session.playbackRate == 1 ? "正常速度" : Self.rateLabel(Double(session.playbackRate)))")
+            #endif
             #if os(iOS)
             Button(action: toggleOrientation) {
                 trackMenuLabel(title: "横竖屏", systemImage: "rotate.right")
@@ -1428,6 +1430,9 @@ struct PlayerScreen: View {
         } label: {
             danmakuMenuLabel
         }
+        .buttonStyle(PlayerControlButtonStyle())
+        .accessibilityLabel("弹幕菜单")
+        .accessibilityHint(danmakuLoadError ?? danmakuMatchTitle.map { "当前匹配：\($0)" } ?? "在线搜索、切换显示或调整弹幕")
         #else
         Menu {
             Button("在线搜索弹幕", action: presentDanmakuSearch)
@@ -1436,10 +1441,10 @@ struct PlayerScreen: View {
         } label: {
             danmakuMenuLabel
         }
-        #endif
         .buttonStyle(PlayerControlButtonStyle())
         .accessibilityLabel("弹幕菜单")
         .accessibilityHint(danmakuLoadError ?? danmakuMatchTitle.map { "当前匹配：\($0)" } ?? "在线搜索、切换显示或调整弹幕")
+        #endif
     }
 
     private var danmakuMenuLabel: some View {
@@ -1536,6 +1541,8 @@ struct PlayerScreen: View {
         } label: {
             trackMenuLabel(title: session.aspectRatioLabel, systemImage: "aspectratio")
         }
+        .buttonStyle(PlayerControlButtonStyle())
+        .accessibilityLabel("画面比例：\(session.aspectRatioLabel)")
         #else
         Menu {
             ForEach(Self.aspectRatios) { option in
@@ -1552,9 +1559,9 @@ struct PlayerScreen: View {
         } label: {
             trackMenuLabel(title: session.aspectRatioLabel, systemImage: "aspectratio")
         }
-        #endif
         .buttonStyle(PlayerControlButtonStyle())
         .accessibilityLabel("画面比例：\(session.aspectRatioLabel)")
+        #endif
     }
 
     private func selectAspectRatio(_ option: AspectRatioOption) {
@@ -1678,6 +1685,8 @@ struct PlayerScreen: View {
         } label: {
             trackMenuLabel(title: "线路", systemImage: "rectangle.stack")
         }
+        .buttonStyle(PlayerControlButtonStyle())
+        .accessibilityLabel("播放线路")
         #else
         Menu {
             ForEach(session.request.availableLines) { line in
@@ -1694,9 +1703,9 @@ struct PlayerScreen: View {
         } label: {
             trackMenuLabel(title: "线路", systemImage: "rectangle.stack")
         }
-        #endif
         .buttonStyle(PlayerControlButtonStyle())
         .accessibilityLabel("播放线路")
+        #endif
     }
 
     private func switchPlaybackLine(_ line: PlaybackLine) {
