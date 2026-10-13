@@ -37,6 +37,7 @@ private enum PlayerTouchGesture: Equatable {
 private enum LivePlayerPanel: String, Equatable, Identifiable {
     case guide = "节目单"
     case sources = "线路"
+    case playlist = "片源与选集"
 
     var id: String { rawValue }
 }
@@ -1002,6 +1003,7 @@ struct PlayerScreen: View {
     @State private var isScrubbing = false
     @State private var seekValue: Double = 0
     @State private var isSwitchingEpisode = false
+    @State private var vodSelectionTask: Task<Void, Never>?
     @State private var errorMessage: String?
     @State private var playerMenuTitle = ""
     @State private var playerMenuOptions: [PlayerMenuOption] = []
@@ -1145,7 +1147,7 @@ struct PlayerScreen: View {
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .frame(height: liveContext != nil && isPortraitLayout ? geometry.size.width * 9 / 16 : nil)
+                    .frame(height: isPortraitLayout && (liveContext != nil || session.request.item != nil) ? geometry.size.width * 9 / 16 : nil)
 
                     #if os(iOS)
                     if isPortraitLayout {
@@ -1157,6 +1159,16 @@ struct PlayerScreen: View {
                             }
                             livePortraitPanels
                                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        } else if let item = session.request.item {
+                            if areControlsVisible {
+                                controlPanel(compact: true)
+                                    .padding(.horizontal, playerPadding(compact: true))
+                                    .padding(.top, 8)
+                            }
+                            ScrollView {
+                                vodPortraitDetails(item)
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                         } else {
                             VStack(spacing: 0) {
                                 Spacer(minLength: 0)
@@ -1239,6 +1251,8 @@ struct PlayerScreen: View {
             danmakuTask?.cancel()
             controlsHideTask?.cancel()
             interactionHUDTask?.cancel()
+            vodSelectionTask?.cancel()
+            vodSelectionTask = nil
             session.stop()
         }
         .onReceive(historySaveTimer) { _ in
@@ -1387,13 +1401,6 @@ struct PlayerScreen: View {
         .onExitCommand {
             if landscapeLivePanel != nil {
                 revealControls()
-            } else if areControlsVisible {
-                controlsHideTask?.cancel()
-                withAnimation(.easeInOut(duration: 0.2)) { areControlsVisible = false }
-                Task { @MainActor in
-                    await Task.yield()
-                    if !areControlsVisible { playerSurfaceFocused = true }
-                }
             } else {
                 dismiss()
             }
@@ -1433,6 +1440,8 @@ struct PlayerScreen: View {
                             } else {
                                 toggleControlsVisibility()
                             }
+                        } else if session.request.item != nil && !isPortraitLayout && value.location.x < size.width * 0.28 {
+                            toggleLivePanel(.playlist)
                         } else {
                             toggleControlsVisibility()
                         }
@@ -1619,7 +1628,7 @@ struct PlayerScreen: View {
                 .padding(.horizontal, 15)
                 .padding(.vertical, 11)
                 .background(.black.opacity(0.48), in: Capsule())
-            #if os(tvOS)
+#if os(tvOS)
             if liveContext != nil {
                 Button { toggleLivePanel(.guide) } label: {
                     Label("节目单", systemImage: "list.bullet.rectangle")
@@ -1631,9 +1640,183 @@ struct PlayerScreen: View {
                 }
                 .buttonStyle(PlayerControlButtonStyle())
                 .accessibilityLabel("显示可切换线路")
+            } else if session.request.item != nil {
+                Button { toggleLivePanel(.playlist) } label: {
+                    Label("片源/选集", systemImage: "list.bullet.rectangle")
+                }
+                .buttonStyle(PlayerControlButtonStyle())
+                .accessibilityLabel("显示片源和选集")
             }
-            #endif
+#endif
         }
+    }
+
+    private func vodPortraitDetails(_ item: MediaItem) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.title)
+                        .font(.system(size: 19, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color.primary)
+                        .lineLimit(1)
+                    Text(session.title)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.tvboxMuted)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                if !item.remarks.isEmpty {
+                    Text(item.remarks)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.tvboxMuted)
+                        .lineLimit(1)
+                }
+            }
+            if !item.summary.isEmpty {
+                Text(item.summary)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.primary.opacity(0.68))
+                    .lineLimit(2)
+            }
+            let metadata = [item.year, item.area, item.language, item.actor.isEmpty ? "" : "主演：\(item.actor)"]
+                .filter { !$0.isEmpty }
+            if !metadata.isEmpty {
+                Text(metadata.joined(separator: " · "))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.tvboxMuted)
+                    .lineLimit(2)
+            }
+            vodPlaylistContent(compact: true)
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 14)
+        .padding(.bottom, 20)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(Color.tvboxSurface)
+        .foregroundStyle(Color(uiColor: .label))
+    }
+
+    private func vodPlaylistContent(compact: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 11) {
+            if let item = session.request.item, item.lines.count > 1 {
+                Text("片源")
+                    .font(.subheadline.weight(.semibold))
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(item.lines) { line in
+                            Button {
+                                switchPlaybackLine(line)
+                            } label: {
+                                HStack(spacing: 6) {
+                                    if line.id == session.request.lineID {
+                                        Image(systemName: "checkmark")
+                                    }
+                                    Text(line.flag)
+                                }
+                                .font(vodChoiceFont)
+                                .foregroundStyle(line.id == session.request.lineID ? .white : Color.primary)
+                                .padding(.horizontal, 12)
+                                .frame(minHeight: vodChoiceMinHeight)
+                                    .background(line.id == session.request.lineID ? Color.tvboxAccent : Color.tvboxSurface,
+                                                in: Capsule())
+                            }
+                            #if os(tvOS)
+                            .buttonStyle(.card)
+                            #else
+                            .buttonStyle(.plain)
+                            #endif
+                            .accessibilityLabel(line.id == session.request.lineID ? "当前片源，\(line.flag)" : line.flag)
+                            .accessibilityAddTraits(line.id == session.request.lineID ? .isSelected : [])
+                            #if os(tvOS)
+                            .focused($livePanelFocusTarget, equals: "vod:line:\(line.id)")
+                            #endif
+                            .disabled(isSwitchingEpisode)
+                        }
+                    }
+                }
+            }
+            Text("选集")
+                .font(.subheadline.weight(.semibold))
+            ScrollViewReader { proxy in
+                ScrollView(compact ? .horizontal : .vertical, showsIndicators: false) {
+                    if compact {
+                        HStack(spacing: 8) { vodEpisodeButtons }
+                    } else {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 2), spacing: 8) {
+                            vodEpisodeButtons
+                        }
+                    }
+                }
+                .task {
+                    #if os(tvOS)
+                    if !compact,
+                       session.request.queue.indices.contains(session.request.queueIndex) {
+                        let episode = session.request.queue[session.request.queueIndex]
+                        await Task.yield()
+                        proxy.scrollTo(episode.id, anchor: .center)
+                        await Task.yield()
+                        livePanelFocusTarget = "vod:\(episode.id)"
+                    }
+                    #endif
+                }
+            }
+            if isSwitchingEpisode {
+                ProgressView("正在切换剧集…")
+                    .font(.caption)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var vodEpisodeButtons: some View {
+        ForEach(Array(session.request.queue.enumerated()), id: \.element.id) { index, episode in
+            Button {
+                selectVodEpisode(episode, at: index)
+            } label: {
+                HStack(spacing: 6) {
+                    if index == session.request.queueIndex {
+                        Image(systemName: "checkmark")
+                    }
+                    Text(episode.title)
+                        .lineLimit(1)
+                }
+                .font(vodChoiceFont)
+                .foregroundStyle(index == session.request.queueIndex ? .white : Color.primary)
+                .padding(.horizontal, 12)
+                .frame(minHeight: vodChoiceMinHeight)
+                .background(index == session.request.queueIndex ? Color.tvboxAccent : Color.tvboxSurface,
+                            in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            }
+            #if os(tvOS)
+            .buttonStyle(.card)
+            #else
+            .buttonStyle(.plain)
+            #endif
+            #if os(tvOS)
+            .focused($livePanelFocusTarget, equals: "vod:\(episode.id)")
+            #endif
+            .accessibilityLabel(index == session.request.queueIndex ? "正在播放，\(episode.title)" : episode.title)
+            .accessibilityAddTraits(index == session.request.queueIndex ? .isSelected : [])
+            .disabled(isSwitchingEpisode)
+            .id(episode.id)
+        }
+    }
+
+    private var vodChoiceFont: Font {
+        #if os(tvOS)
+        .body.weight(.semibold)
+        #else
+        .callout.weight(.semibold)
+        #endif
+    }
+
+    private var vodChoiceMinHeight: CGFloat {
+        #if os(tvOS)
+        64
+        #else
+        44
+        #endif
     }
 
     private var livePortraitPanels: some View {
@@ -1741,6 +1924,8 @@ struct PlayerScreen: View {
             liveLandscapeGuideContent
         case .sources:
             liveSourceContent
+        case .playlist:
+            vodPlaylistContent(compact: false)
         }
     }
 
@@ -2002,15 +2187,16 @@ struct PlayerScreen: View {
         size: CGSize,
         safeAreaInsets: EdgeInsets
     ) -> some View {
-        ZStack(alignment: panel == .guide ? .leading : .trailing) {
+        let onLeft = panel != .sources
+        return ZStack(alignment: onLeft ? .leading : .trailing) {
             liveSidePanel(panel, size: size, safeAreaInsets: safeAreaInsets)
         }
         .frame(
             maxWidth: .infinity,
             maxHeight: .infinity,
-            alignment: panel == .guide ? .leading : .trailing
+            alignment: onLeft ? .leading : .trailing
         )
-        .transition(.move(edge: panel == .guide ? .leading : .trailing).combined(with: .opacity))
+        .transition(.move(edge: onLeft ? .leading : .trailing).combined(with: .opacity))
     }
 
     private func liveSidePanel(
@@ -2019,18 +2205,23 @@ struct PlayerScreen: View {
         safeAreaInsets: EdgeInsets
     ) -> some View {
         return VStack(spacing: 10) {
-            Text(panel.rawValue)
-                .font(.headline)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack {
+                Text(panel.rawValue)
+                    .font(.headline)
+                Spacer()
+                Button("完成") { toggleLivePanel(panel) }
+                    .buttonStyle(.bordered)
+            }
             livePanelContent(panel)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .padding(.top, 14 + safeAreaInsets.top)
         .padding(.bottom, 14 + safeAreaInsets.bottom)
-        .padding(.leading, 14 + (panel == .guide ? safeAreaInsets.leading : 0))
+        .padding(.leading, 14 + (panel != .sources ? safeAreaInsets.leading : 0))
         .padding(.trailing, 14 + (panel == .sources ? safeAreaInsets.trailing : 0))
         .frame(width: panel == .guide
             ? min(max(size.width * 0.78, 560), 1_000)
+            : panel == .playlist ? min(max(size.width * 0.42, 360), 620)
             : min(max(size.width * 0.32, 280), 390))
         .frame(maxHeight: .infinity, alignment: .top)
         .background(.ultraThinMaterial)
@@ -2745,7 +2936,8 @@ struct PlayerScreen: View {
         let episode = line.episodes[nextIndex]
         isSwitchingEpisode = true
         persistPlaybackPosition()
-        Task {
+        vodSelectionTask?.cancel()
+        vodSelectionTask = Task {
             do {
                 let next = try await catalog.playbackRequest(
                     for: item,
@@ -2753,10 +2945,46 @@ struct PlayerScreen: View {
                     queue: line.episodes,
                     queueIndex: nextIndex
                 )
+                guard !Task.isCancelled else { return }
                 session.replace(with: next)
+                #if os(tvOS)
+                if landscapeLivePanel == .playlist { livePanelFocusTarget = "vod:\(episode.id)" }
+                #endif
             } catch {
+                guard !Task.isCancelled else { return }
                 errorMessage = error.localizedDescription
             }
+            guard !Task.isCancelled else { return }
+            isSwitchingEpisode = false
+        }
+    }
+
+    private func selectVodEpisode(_ episode: Episode, at index: Int) {
+        let current = session.request
+        guard index != current.queueIndex,
+              let item = current.item,
+              !isSwitchingEpisode else { return }
+        isSwitchingEpisode = true
+        persistPlaybackPosition()
+        vodSelectionTask?.cancel()
+        vodSelectionTask = Task {
+            do {
+                let next = try await catalog.playbackRequest(
+                    for: item,
+                    episode: episode,
+                    queue: current.queue,
+                    queueIndex: index
+                )
+                guard !Task.isCancelled else { return }
+                session.replace(with: next)
+                #if os(tvOS)
+                if landscapeLivePanel == .playlist { livePanelFocusTarget = "vod:\(episode.id)" }
+                #endif
+            } catch {
+                guard !Task.isCancelled else { return }
+                errorMessage = error.localizedDescription
+            }
+            guard !Task.isCancelled else { return }
             isSwitchingEpisode = false
         }
     }
@@ -2794,23 +3022,7 @@ struct PlayerScreen: View {
             ))
             return
         }
-        guard let item = current.item else { return }
-        isSwitchingEpisode = true
-        persistPlaybackPosition()
-        Task {
-            do {
-                let next = try await catalog.playbackRequest(
-                    for: item,
-                    episode: episode,
-                    queue: current.queue,
-                    queueIndex: targetIndex
-                )
-                session.replace(with: next)
-            } catch {
-                errorMessage = error.localizedDescription
-            }
-            isSwitchingEpisode = false
-        }
+        selectVodEpisode(episode, at: targetIndex)
     }
 
     private func persistPlaybackPosition() {
