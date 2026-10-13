@@ -2,7 +2,6 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var catalog: CatalogStore
-    @Environment(\.dismiss) private var dismiss
     @AppStorage("tvbox.autoNext") private var autoNextEpisode = true
     @AppStorage("tvbox.skipOpeningSeconds") private var skipOpeningSeconds = 0
     @State private var endpoint = ""
@@ -18,7 +17,6 @@ struct SettingsView: View {
                 ScreenBackground()
                 ScrollView {
                     VStack(alignment: .leading, spacing: wide ? 26 : 21) {
-                        topBar
                         titleBlock
                         sourceSection
                         scopeSection
@@ -32,11 +30,6 @@ struct SettingsView: View {
                     .frame(maxWidth: .infinity)
                 }
             }
-            .navigationTitle("设置")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(.hidden, for: .navigationBar)
-            #endif
             .onAppear {
                 endpoint = catalog.sourceURL
                 Task { posterCacheSize = await PosterImageCache.cachedSize() }
@@ -65,24 +58,6 @@ struct SettingsView: View {
             } message: {
                 Text("已缓存的图片会在下次显示时重新下载。")
             }
-            #if os(iOS)
-            .edgeSwipeBack(width: geometry.size.width)
-            #endif
-        }
-    }
-
-    private var topBar: some View {
-        HStack {
-            Button { dismiss() } label: {
-                Label("返回", systemImage: "chevron.left")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Color.primary)
-                    .padding(.horizontal, 15)
-                    .padding(.vertical, 11)
-                    .background(Color.tvboxSurface, in: Capsule())
-            }
-            .buttonStyle(FocusAwareButtonStyle())
-            Spacer()
         }
     }
 

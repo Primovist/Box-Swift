@@ -4,6 +4,7 @@ private enum HomeSection: String, CaseIterable, Identifiable {
     case video = "影视"
     case live = "直播"
     case search = "搜索"
+    case settings = "设置"
 
     var id: String { rawValue }
 }
@@ -20,7 +21,6 @@ struct HomeView: View {
     @AppStorage("tvbox.searchAcrossSites") private var searchAcrossSites = true
     @State private var searchText = ""
     @State private var section: HomeSection = .video
-    @State private var showingSettings = false
     #if os(iOS)
     @State private var isSectionNavigationCollapsed = false
     @State private var downwardScrollDistance: CGFloat = 0
@@ -38,6 +38,7 @@ struct HomeView: View {
         case .video: return catalog.items
         case .live: return []
         case .search: return catalog.isSearching ? catalog.items : []
+        case .settings: return []
         }
     }
 
@@ -59,6 +60,9 @@ struct HomeView: View {
                         .padding(.bottom, 8)
                         .frame(maxWidth: .infinity)
                         #endif
+                        if section == .settings {
+                            SettingsView()
+                        } else {
                         ScrollView {
                             VStack(alignment: .leading, spacing: wide ? 28 : 20) {
                                 #if os(iOS)
@@ -131,13 +135,11 @@ struct HomeView: View {
                             updateSectionNavigation(oldMetrics: oldMetrics, newMetrics: newMetrics)
                         }
                         #endif
+                        }
                     }
                 }
                 .navigationDestination(for: MediaItem.self) { item in
                     DetailView(item: item)
-                }
-                .navigationDestination(isPresented: $showingSettings) {
-                    SettingsView()
                 }
                 .toolbar(.hidden, for: .navigationBar)
                 #if os(iOS)
@@ -329,13 +331,6 @@ struct HomeView: View {
                 }
                 .buttonStyle(FocusAwareButtonStyle())
             }
-            Button { showingSettings = true } label: {
-                Label("设置", systemImage: "gearshape")
-                    .font(.system(size: 14, weight: .bold))
-                    .padding(.horizontal, wide ? 19 : 16)
-                    .padding(.vertical, 11)
-            }
-            .buttonStyle(FocusAwareButtonStyle())
             Spacer(minLength: 0)
             if section == .video, let site = catalog.selectedSite {
                 Text(site.type == 0 ? "XML API" : site.type == 4 ? "HTTP API" : "JSON API")
@@ -388,19 +383,6 @@ struct HomeView: View {
                         .accessibilityLabel(value.rawValue)
                         .accessibilityAddTraits(section == value ? .isSelected : [])
                     }
-                    Button { showingSettings = true } label: {
-                        VStack(spacing: 5) {
-                            Image(systemName: "gearshape")
-                                .font(.system(size: 18, weight: .regular))
-                            Text("设置")
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundStyle(Color.tvboxMuted)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 52)
-                        .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
                 }
                 .padding(7)
                 .background(.black.opacity(0.14), in: Capsule())
@@ -469,6 +451,7 @@ struct HomeView: View {
         case .video: return "play.rectangle.on.rectangle"
         case .live: return "dot.radiowaves.left.and.right"
         case .search: return "magnifyingglass"
+        case .settings: return "gearshape"
         }
     }
     #endif
