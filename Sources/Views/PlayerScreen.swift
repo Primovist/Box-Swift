@@ -75,6 +75,7 @@ private struct SystemVolumeControl: UIViewRepresentable {
 final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelegate {
     @Published private(set) var status = "准备连接"
     @Published private(set) var isPlaying = false
+    @Published private(set) var playbackRequested = false
     @Published private(set) var progress: Double = 0
     @Published private(set) var elapsedText = "00:00"
     @Published private(set) var durationText = "--:--"
@@ -143,6 +144,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
             status = "播放失败"
             return
         }
+        playbackRequested = true
         status = "正在连接…"
         player.play()
         startProgressUpdates()
@@ -180,6 +182,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         title = request.title
         status = "正在连接…"
         isPlaying = false
+        playbackRequested = false
         progress = 0
         currentMilliseconds = 0
         elapsedText = "00:00"
@@ -199,12 +202,11 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     }
 
     func togglePlayback() {
-        if isPlaying {
-            player.pause()
-            updateDanmakuClockPlaybackState(isPlaying: false, isBuffering: false)
-            status = "已暂停"
+        if playbackRequested || isPlaying {
+            pause()
         } else {
             player.play()
+            playbackRequested = true
             updateDanmakuClockPlaybackState(isPlaying: true, isBuffering: false)
             status = "正在播放"
         }
@@ -212,7 +214,8 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     }
 
     func pause() {
-        guard isPlaying else { return }
+        guard playbackRequested || isPlaying else { return }
+        playbackRequested = false
         player.pause()
         updateDanmakuClockPlaybackState(isPlaying: false, isBuffering: false)
         status = "已暂停"
@@ -293,6 +296,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         progressTimer?.invalidate()
         progressTimer = nil
         ignoreNextStoppedEvent = true
+        playbackRequested = false
         player.stop()
         updateDanmakuClockPlaybackState(isPlaying: false, isBuffering: false)
         player.drawable = nil
@@ -368,30 +372,50 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     private func refreshState(_ state: VLCMediaPlayerState) {
         switch state {
         case .playing:
+            guard playbackRequested else {
+                player.pause()
+                status = "已暂停"
+                updateDanmakuClockPlaybackState(isPlaying: false, isBuffering: false)
+                refreshProgress()
+                return
+            }
             status = "正在播放"
             updateDanmakuClockPlaybackState(isPlaying: true, isBuffering: false)
             ignoreNextStoppedEvent = false
             observedNearEnd = false
             refreshTracks()
         case .paused:
+            guard !playbackRequested else { break }
             status = "已暂停"
             updateDanmakuClockPlaybackState(isPlaying: false, isBuffering: false)
         case .opening:
+            guard playbackRequested else { break }
             status = "正在缓冲…"
             updateDanmakuClockPlaybackState(isBuffering: true)
         case .stopping:
+            guard !playbackRequested else { break }
             status = "正在停止…"
             updateDanmakuClockPlaybackState(isPlaying: false, isBuffering: false)
         case .stopped:
-            status = "已停止"
-            updateDanmakuClockPlaybackState(isPlaying: false, isBuffering: false)
+            guard case .stopped = player.state else {
+                if ignoreNextStoppedEvent { ignoreNextStoppedEvent = false }
+                break
+            }
             if ignoreNextStoppedEvent {
                 ignoreNextStoppedEvent = false
-            } else if !request.isLive && isAtEndOrObservedNearEnd {
-                status = "播放结束"
-                didReachEnd = true
+                if !playbackRequested {
+                    status = "已停止"
+                    updateDanmakuClockPlaybackState(isPlaying: false, isBuffering: false)
+                }
+            } else {
+                playbackRequested = false
+                let reachedEnd = !request.isLive && isAtEndOrObservedNearEnd
+                status = reachedEnd ? "播放结束" : "已停止"
+                updateDanmakuClockPlaybackState(isPlaying: false, isBuffering: false)
+                if reachedEnd { didReachEnd = true }
             }
         case .error:
+            playbackRequested = false
             status = "播放失败"
             updateDanmakuClockPlaybackState(isPlaying: false, isBuffering: false)
         default:
@@ -670,6 +694,10 @@ struct PlayerScreen: View {
     @State private var danmakuTask: Task<Void, Never>?
     @State private var showingDanmakuSearch = false
     @State private var showingSubtitleTracks = false
+    @State private var resumePlaybackAfterDanmakuSearch = false
+    @State private var resumePlaybackAfterSubtitleSelection = false
+    @State private var resumePlaybackAfterPlayerMenu = false
+    @State private var resumePlaybackAfterDanmakuSettings = false
     @State private var danmakuAPIWhenSettingsOpened = ""
     @State private var danmakuSearchPlaybackGeneration: Int?
     @State private var showingDanmakuSettings = false
@@ -883,14 +911,26 @@ struct PlayerScreen: View {
         }
         .onChange(of: showingDanmakuSearch) { _, showing in
             if showing { controlsHideTask?.cancel() }
-            else if session.isPlaying { revealControls() }
+            else {
+                if resumePlaybackAfterDanmakuSearch {
+                    resumePlaybackAfterDanmakuSearch = false
+                    session.play()
+                    revealControls()
+                }
+            }
         }
         .onChange(of: showingDanmakuSettings) { _, showing in
             if showing {
                 danmakuAPIWhenSettingsOpened = danmakuAPIAddress
                 controlsHideTask?.cancel()
             } else {
-                if session.isPlaying { revealControls() }
+                if resumePlaybackAfterDanmakuSettings {
+                    resumePlaybackAfterDanmakuSettings = false
+                    session.play()
+                    revealControls()
+                } else if session.isPlaying {
+                    revealControls()
+                }
                 if danmakuEnabled, danmakuAPIWhenSettingsOpened != danmakuAPIAddress {
                     loadEpisodeDanmaku()
                 }
@@ -898,7 +938,22 @@ struct PlayerScreen: View {
         }
         .onChange(of: showingPlayerMenu) { _, showing in
             if showing { controlsHideTask?.cancel() }
-            else if session.isPlaying { revealControls() }
+            else if resumePlaybackAfterPlayerMenu {
+                resumePlaybackAfterPlayerMenu = false
+                session.play()
+                revealControls()
+            } else if session.isPlaying {
+                revealControls()
+            }
+        }
+        .onChange(of: showingSubtitleTracks) { _, showing in
+            if showing {
+                controlsHideTask?.cancel()
+            } else if resumePlaybackAfterSubtitleSelection {
+                resumePlaybackAfterSubtitleSelection = false
+                session.play()
+                revealControls()
+            }
         }
         .alert("无法开始播放", isPresented: Binding(
             get: { errorMessage != nil },
@@ -941,13 +996,13 @@ struct PlayerScreen: View {
                 }
             }
         }
-        #endif
-        #if os(tvOS)
+#endif
         .confirmationDialog(playerMenuTitle, isPresented: $showingPlayerMenu, titleVisibility: .visible) {
             ForEach(playerMenuOptions) { option in
                 Button(option.title, action: option.action)
             }
         }
+#if os(tvOS)
         .onExitCommand {
             if areControlsVisible {
                 controlsHideTask?.cancel()
@@ -1302,8 +1357,7 @@ struct PlayerScreen: View {
             if !session.subtitleTracks.isEmpty {
                 #if os(iOS)
                 Button {
-                    session.pause()
-                    showingSubtitleTracks = true
+                    presentSubtitleSelection()
                 } label: {
                     trackMenuLabel(title: "字幕", systemImage: "captions.bubble")
                 }
@@ -1332,7 +1386,6 @@ struct PlayerScreen: View {
             } label: {
                 playbackRateLabel
             }
-            .buttonStyle(PlayerControlButtonStyle())
             #else
             Menu {
                 ForEach([0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { rate in
@@ -1343,8 +1396,9 @@ struct PlayerScreen: View {
             } label: {
                 playbackRateLabel
             }
-            .accessibilityLabel("播放速度")
             #endif
+            .buttonStyle(PlayerControlButtonStyle())
+            .accessibilityLabel("播放速度：\(session.playbackRate == 1 ? "正常速度" : Self.rateLabel(Double(session.playbackRate)))")
             #if os(iOS)
             Button(action: toggleOrientation) {
                 trackMenuLabel(title: "横竖屏", systemImage: "rotate.right")
@@ -1357,12 +1411,7 @@ struct PlayerScreen: View {
     }
 
     private var playbackRateLabel: some View {
-        Label(session.playbackRate == 1 ? "倍速" : Self.rateLabel(Double(session.playbackRate)), systemImage: "speedometer")
-            .font(.system(size: 12, weight: .semibold))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .background(.white.opacity(0.12), in: Capsule())
-            .accessibilityLabel("播放速度")
+        trackMenuLabel(title: "播放速度", systemImage: "speedometer")
     }
 
     private var danmakuMenu: some View {
@@ -1373,24 +1422,24 @@ struct PlayerScreen: View {
                 options: [
                     PlayerMenuOption(id: "search", title: "在线搜索弹幕", action: presentDanmakuSearch),
                     PlayerMenuOption(id: "toggle", title: danmakuEnabled ? "关闭弹幕" : "开启弹幕", action: { danmakuEnabled.toggle() }),
-                    PlayerMenuOption(id: "settings", title: "弹幕设置", action: { showingDanmakuSettings = true })
+                    PlayerMenuOption(id: "settings", title: "弹幕设置", action: presentDanmakuSettings)
                 ]
             )
         } label: {
             danmakuMenuLabel
         }
-        .buttonStyle(PlayerControlButtonStyle())
         #else
         Menu {
             Button("在线搜索弹幕", action: presentDanmakuSearch)
             Button(danmakuEnabled ? "关闭弹幕" : "开启弹幕") { danmakuEnabled.toggle() }
-            Button("弹幕设置") { showingDanmakuSettings = true }
+            Button("弹幕设置", action: presentDanmakuSettings)
         } label: {
             danmakuMenuLabel
         }
+        #endif
+        .buttonStyle(PlayerControlButtonStyle())
         .accessibilityLabel("弹幕菜单")
         .accessibilityHint(danmakuLoadError ?? danmakuMatchTitle.map { "当前匹配：\($0)" } ?? "在线搜索、切换显示或调整弹幕")
-        #endif
     }
 
     private var danmakuMenuLabel: some View {
@@ -1398,7 +1447,7 @@ struct PlayerScreen: View {
             title: danmakuLoadError == nil
                 ? (danmakuMatchTitle == nil ? (danmakuEnabled ? "弹幕" : "弹幕关") : "弹幕已匹配")
                 : "弹幕错误",
-            systemImage: "captions.bubble"
+            systemImage: "bubble.left.and.bubble.right"
         )
     }
 
@@ -1410,6 +1459,7 @@ struct PlayerScreen: View {
 
     private func presentDanmakuSearch() {
         danmakuSearchPlaybackGeneration = session.playbackGeneration
+        resumePlaybackAfterDanmakuSearch = shouldResumePlayback
         session.pause()
         showingDanmakuSearch = true
     }
@@ -1486,7 +1536,6 @@ struct PlayerScreen: View {
         } label: {
             trackMenuLabel(title: session.aspectRatioLabel, systemImage: "aspectratio")
         }
-        .buttonStyle(PlayerControlButtonStyle())
         #else
         Menu {
             ForEach(Self.aspectRatios) { option in
@@ -1503,8 +1552,9 @@ struct PlayerScreen: View {
         } label: {
             trackMenuLabel(title: session.aspectRatioLabel, systemImage: "aspectratio")
         }
-        .accessibilityLabel("画面比例")
         #endif
+        .buttonStyle(PlayerControlButtonStyle())
+        .accessibilityLabel("画面比例：\(session.aspectRatioLabel)")
     }
 
     private func selectAspectRatio(_ option: AspectRatioOption) {
@@ -1512,10 +1562,34 @@ struct PlayerScreen: View {
         session.setAspectRatio(option.value.isEmpty ? nil : option.value, label: option.label)
     }
 
-    private func presentPlayerMenu(title: String, options: [PlayerMenuOption]) {
+    private func presentPlayerMenu(
+        title: String,
+        options: [PlayerMenuOption],
+        pausesPlaybackForSelection: Bool = false
+    ) {
         playerMenuTitle = title
         playerMenuOptions = options
+        if pausesPlaybackForSelection {
+            resumePlaybackAfterPlayerMenu = shouldResumePlayback
+            session.pause()
+        }
         showingPlayerMenu = true
+    }
+
+    private var shouldResumePlayback: Bool {
+        session.playbackRequested || session.isPlaying
+    }
+
+    private func presentSubtitleSelection() {
+        resumePlaybackAfterSubtitleSelection = shouldResumePlayback
+        session.pause()
+        showingSubtitleTracks = true
+    }
+
+    private func presentDanmakuSettings() {
+        resumePlaybackAfterDanmakuSettings = shouldResumePlayback
+        session.pause()
+        showingDanmakuSettings = true
     }
 
     #if os(tvOS)
@@ -1561,53 +1635,31 @@ struct PlayerScreen: View {
         selectedIndex: Int,
         select: @escaping (Int) -> Void
     ) -> some View {
-        #if os(tvOS)
         Button {
-            if title == "字幕" { session.pause() }
             presentPlayerMenu(
                 title: title,
                 options: options.map { option in
                     PlayerMenuOption(
                         id: String(option.index),
                         title: option.index == selectedIndex ? "✓  \(option.title)" : option.title,
-                    action: {
-                        if title == "字幕" { session.pause() }
-                        select(option.index)
-                    }
+                        action: { select(option.index) }
                     )
-                }
+                },
+                pausesPlaybackForSelection: true
             )
         } label: {
             trackMenuLabel(title: title, systemImage: systemImage)
         }
         .buttonStyle(PlayerControlButtonStyle())
-        #else
-        Menu {
-            ForEach(options) { option in
-                Button {
-                    if title == "字幕" { session.pause() }
-                    select(option.index)
-                } label: {
-                    if option.index == selectedIndex {
-                        Label(option.title, systemImage: "checkmark")
-                    } else {
-                        Text(option.title)
-                    }
-                }
-            }
-        } label: {
-            trackMenuLabel(title: title, systemImage: systemImage)
-        }
         .accessibilityLabel(title)
-        #endif
     }
 
     private func trackMenuLabel(title: String, systemImage: String) -> some View {
-        Label(title, systemImage: systemImage)
-            .font(.system(size: 12, weight: .semibold))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .background(.white.opacity(0.12), in: Capsule())
+        Image(systemName: systemImage)
+            .font(.system(size: 16, weight: .semibold))
+            .frame(width: 42, height: 42)
+            .contentShape(Circle())
+            .accessibilityLabel(title)
     }
 
     private var lineMenu: some View {
@@ -1626,7 +1678,6 @@ struct PlayerScreen: View {
         } label: {
             trackMenuLabel(title: "线路", systemImage: "rectangle.stack")
         }
-        .buttonStyle(PlayerControlButtonStyle())
         #else
         Menu {
             ForEach(session.request.availableLines) { line in
@@ -1643,8 +1694,9 @@ struct PlayerScreen: View {
         } label: {
             trackMenuLabel(title: "线路", systemImage: "rectangle.stack")
         }
-        .accessibilityLabel("播放线路")
         #endif
+        .buttonStyle(PlayerControlButtonStyle())
+        .accessibilityLabel("播放线路")
     }
 
     private func switchPlaybackLine(_ line: PlaybackLine) {

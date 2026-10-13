@@ -6,12 +6,6 @@ struct SettingsView: View {
     @AppStorage("tvbox.autoNext") private var autoNextEpisode = true
     @AppStorage("tvbox.skipOpeningSeconds") private var skipOpeningSeconds = 0
     @State private var endpoint = ""
-    @State private var selectedSavedSourceURL = ""
-    @State private var directURL = ""
-    @State private var userAgent = ""
-    @State private var referer = ""
-    @State private var validationMessage: String?
-    @State private var playbackRequest: PlaybackRequest?
     @State private var posterCacheSize: Int64 = 0
     @State private var cacheMessage: String?
     @State private var isConfirmingRestore = false
@@ -26,17 +20,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: wide ? 26 : 21) {
                         topBar
                         titleBlock
-                        if wide {
-                            HStack(alignment: .top, spacing: 20) {
-                                sourceSection
-                                    .frame(maxWidth: .infinity)
-                                directPlaySection
-                                    .frame(maxWidth: .infinity)
-                            }
-                        } else {
-                            sourceSection
-                            directPlaySection
-                        }
+                        sourceSection
                         scopeSection
                         playerPreferencesSection
                         posterCacheSection
@@ -55,12 +39,10 @@ struct SettingsView: View {
             #endif
             .onAppear {
                 endpoint = catalog.sourceURL
-                selectedSavedSourceURL = catalog.sourceURL
                 Task { posterCacheSize = await PosterImageCache.cachedSize() }
             }
             .onChange(of: catalog.sourceURL) { _, value in
                 endpoint = value
-                selectedSavedSourceURL = value
             }
             .confirmationDialog("恢复演示数据？", isPresented: $isConfirmingRestore, titleVisibility: .visible) {
                 Button("恢复演示数据", role: .destructive) {
@@ -86,9 +68,6 @@ struct SettingsView: View {
             #if os(iOS)
             .edgeSwipeBack(width: geometry.size.width)
             #endif
-        }
-        .fullScreenCover(item: $playbackRequest) { request in
-            PlayerScreen(request: request)
         }
     }
 
@@ -122,26 +101,13 @@ struct SettingsView: View {
 
     private var sourceSection: some View {
         VStack(alignment: .leading, spacing: 15) {
-            if !catalog.savedSourceURLs.isEmpty {
-                Picker("已保存的 tvbox.json", selection: $selectedSavedSourceURL) {
-                    Text("选择已保存的配置").tag("")
-                    ForEach(catalog.savedSourceURLs, id: \.self) { address in
-                        Text(address).lineLimit(1).tag(address)
-                    }
-                }
-                .pickerStyle(.menu)
-                .onChange(of: selectedSavedSourceURL) { _, value in
-                    guard !value.isEmpty, value != catalog.sourceURL else { return }
-                    Task { await catalog.loadConfiguration(from: value) }
-                }
-            }
             Label("tvbox.json 地址", systemImage: "point.3.connected.trianglepath.dotted")
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundStyle(Color.primary)
             urlField("https://example.com/tvbox.json", text: $endpoint)
             HStack(spacing: 10) {
                 Button {
-                    Task { await catalog.loadConfiguration(from: endpoint) }
+                    Task { await catalog.loadConfiguration(from: endpoint, restoreRemovedSites: true) }
                 } label: {
                     if catalog.isLoading {
                         ProgressView().tint(.white).frame(minWidth: 70, minHeight: 44)
@@ -162,20 +128,31 @@ struct SettingsView: View {
             }
 
             if let configuration = catalog.configuration {
-                if !configuration.sites.isEmpty {
-                    Picker("当前站点", selection: Binding(
-                        get: { catalog.selectedSiteKey },
-                        set: { catalog.selectSite($0) }
-                    )) {
-                        ForEach(configuration.sites) { site in
-                            Text(site.name).tag(site.key)
+                if !catalog.availableSites.isEmpty {
+                    HStack(spacing: 10) {
+                        Picker("当前站点", selection: Binding(
+                            get: { catalog.selectedSiteKey },
+                            set: { catalog.selectSite($0) }
+                        )) {
+                            ForEach(catalog.availableSites) { site in
+                                Text(site.name).tag(site.key)
+                            }
                         }
+                        .pickerStyle(.menu)
+
+                        Button(role: .destructive) {
+                            catalog.removeSelectedSite()
+                        } label: {
+                            Label("删除", systemImage: "trash")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(catalog.selectedSite == nil)
+                        .accessibilityLabel("删除当前所选视频源")
                     }
-                    .pickerStyle(.menu)
                 }
                 HStack(spacing: 8) {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.tvboxCyan)
-                    Text("已载入 \(configuration.sites.count) 个站点、\(configuration.parsers.count) 个解析器、\(configuration.liveGroups.reduce(0) { $0 + $1.channels.count }) 个内置直播频道\(configuration.epgURL.isEmpty ? "" : "，已配置节目单")。")
+                    Text("当前有 \(catalog.availableSites.count) 个可用站点、\(configuration.parsers.count) 个解析器、\(configuration.liveGroups.reduce(0) { $0 + $1.channels.count }) 个内置直播频道\(configuration.epgURL.isEmpty ? "" : "，已配置节目单")。")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(Color.primary.opacity(0.82))
                         .fixedSize(horizontal: false, vertical: true)
@@ -191,29 +168,6 @@ struct SettingsView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(Color.tvboxMuted)
                 .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(20)
-        .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(.white.opacity(0.08), lineWidth: 1))
-    }
-
-    private var directPlaySection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label("直接播放地址", systemImage: "play.rectangle")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.primary)
-            urlField("媒体 URL（HLS、MP4 等）", text: $directURL)
-            plainField("User-Agent（可选）", text: $userAgent)
-            urlField("Referer（可选）", text: $referer)
-            HStack(spacing: 12) {
-                Button(action: startDirectPlayback) {
-                    Label("开始播放", systemImage: "play.fill")
-                }
-                .buttonStyle(PrimaryActionStyle())
-                if let validationMessage {
-                    Text(validationMessage).font(.system(size: 12)).foregroundStyle(.orange)
-                }
-            }
         }
         .padding(20)
         .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -307,32 +261,4 @@ struct SettingsView: View {
         #endif
     }
 
-    @ViewBuilder
-    private func plainField(_ title: String, text: Binding<String>) -> some View {
-        #if os(iOS)
-        TextField(title, text: text)
-            .textFieldStyle(.roundedBorder)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-        #else
-        TextField(title, text: text)
-            .textFieldStyle(.plain)
-            .autocorrectionDisabled()
-        #endif
-    }
-
-    private func startDirectPlayback() {
-        let value = directURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: value), ["http", "https", "rtsp", "rtmp"].contains(url.scheme?.lowercased() ?? "") else {
-            validationMessage = "请输入有效的 HTTP、HTTPS、RTSP 或 RTMP 地址。"
-            return
-        }
-        var headers: [String: String] = [:]
-        let trimmedUA = userAgent.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedReferer = referer.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedUA.isEmpty { headers["User-Agent"] = trimmedUA }
-        if !trimmedReferer.isEmpty { headers["Referer"] = trimmedReferer }
-        validationMessage = nil
-        playbackRequest = PlaybackRequest(title: url.lastPathComponent.isEmpty ? "直接播放" : url.lastPathComponent, url: url, headers: headers)
-    }
 }

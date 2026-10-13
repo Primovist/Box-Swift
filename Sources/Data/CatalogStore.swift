@@ -10,6 +10,7 @@ final class CatalogStore: ObservableObject {
     @Published private(set) var favoriteIDs: Set<String>
     @Published private(set) var historyIDs: [String]
     @Published private(set) var configuration: TVBoxConfiguration?
+    @Published private(set) var removedSiteKeys: Set<String> = []
     @Published private(set) var categories: [TVBoxCategory] = []
     @Published private(set) var selectedCategoryID = ""
     @Published private(set) var selectedSiteKey = ""
@@ -42,7 +43,11 @@ final class CatalogStore: ObservableObject {
     private var globalSearchPageCountBySite: [String: Int] = [:]
 
     var selectedSite: TVBoxSite? {
-        configuration?.sites.first { $0.key == selectedSiteKey } ?? configuration?.sites.first
+        availableSites.first { $0.key == selectedSiteKey } ?? availableSites.first
+    }
+
+    var availableSites: [TVBoxSite] {
+        configuration?.sites.filter { !removedSiteKeys.contains($0.key) } ?? []
     }
 
     var selectedCategory: TVBoxCategory? {
@@ -202,10 +207,16 @@ final class CatalogStore: ObservableObject {
         Task { await loadConfiguration(from: sourceURL) }
     }
 
-    func loadConfiguration(from address: String) async {
+    func loadConfiguration(from address: String, restoreRemovedSites: Bool = false) async {
         let previousAddress = UserDefaults.standard.string(forKey: "tvbox.sourceURL") ?? ""
         let requestAddress = address.trimmingCharacters(in: .whitespacesAndNewlines)
         saveSourceURL(address)
+        if restoreRemovedSites {
+            removedSiteKeys = []
+            UserDefaults.standard.removeObject(forKey: Self.removedSitesKey(for: requestAddress))
+        } else {
+            removedSiteKeys = Set(UserDefaults.standard.stringArray(forKey: Self.removedSitesKey(for: requestAddress)) ?? [])
+        }
         selectedSiteKey = UserDefaults.standard.string(forKey: Self.siteKey(for: requestAddress))
             ?? (previousAddress == requestAddress ? (UserDefaults.standard.string(forKey: "tvbox.selectedSite") ?? "") : "")
         selectedParserName = UserDefaults.standard.string(forKey: Self.parserKey(for: requestAddress))
@@ -232,8 +243,8 @@ final class CatalogStore: ObservableObject {
                     selectParser("")
                 }
                 UserDefaults.standard.set(data, forKey: Self.configurationKey(for: requestAddress))
-                if !loaded.sites.contains(where: { $0.key == self.selectedSiteKey }) {
-                    selectedSiteKey = loaded.sites.first?.key ?? ""
+                if !availableSites.contains(where: { $0.key == self.selectedSiteKey }) {
+                    selectedSiteKey = availableSites.first?.key ?? ""
                 }
                 UserDefaults.standard.set(selectedSiteKey, forKey: "tvbox.selectedSite")
                 UserDefaults.standard.set(selectedSiteKey, forKey: Self.siteKey(for: requestAddress))
@@ -256,8 +267,8 @@ final class CatalogStore: ObservableObject {
                         selectParser("")
                     }
                     liveGroups = fallback.liveGroups
-                    if !fallback.sites.contains(where: { $0.key == self.selectedSiteKey }) {
-                        selectedSiteKey = fallback.sites.first?.key ?? ""
+                    if !availableSites.contains(where: { $0.key == self.selectedSiteKey }) {
+                        selectedSiteKey = availableSites.first?.key ?? ""
                     }
                     loadMessage = "配置拉取失败，已使用上次保存的 tvbox.json。\n\(error.localizedDescription)"
                     await loadSiteData(generation: generation)
@@ -268,7 +279,7 @@ final class CatalogStore: ObservableObject {
     }
 
     func selectSite(_ key: String) {
-        guard configuration?.sites.contains(where: { $0.key == key }) == true else { return }
+        guard availableSites.contains(where: { $0.key == key }) else { return }
         selectedSiteKey = key
         UserDefaults.standard.set(key, forKey: "tvbox.selectedSite")
         UserDefaults.standard.set(key, forKey: Self.siteKey(for: sourceURL))
@@ -283,6 +294,37 @@ final class CatalogStore: ObservableObject {
         contentTask = Task { [weak self] in
             await self?.loadSiteData(generation: generation)
         }
+    }
+
+    func removeSelectedSite() {
+        guard let site = selectedSite, !sourceURL.isEmpty else { return }
+        removedSiteKeys.insert(site.key)
+        UserDefaults.standard.set(removedSiteKeys.sorted(), forKey: Self.removedSitesKey(for: sourceURL))
+
+        if let nextSite = availableSites.first {
+            selectSite(nextSite.key)
+            return
+        }
+
+        selectedSiteKey = ""
+        UserDefaults.standard.set("", forKey: "tvbox.selectedSite")
+        UserDefaults.standard.set("", forKey: Self.siteKey(for: sourceURL))
+        requestGeneration += 1
+        contentTask?.cancel()
+        contentTask = nil
+        categories = []
+        selectedCategoryID = ""
+        items = []
+        isLoading = false
+        isSearching = false
+        isSearchingAllSites = false
+        canLoadMore = false
+        globalSearchResults = []
+        globalSearchSites = []
+        globalSearchPageBySite = [:]
+        globalSearchPageCountBySite = [:]
+        selectedFilters = [:]
+        loadMessage = "此配置的所有视频源已移除；重新载入配置可恢复。"
     }
 
     func selectCategory(_ categoryID: String) {
@@ -320,7 +362,7 @@ final class CatalogStore: ObservableObject {
         isLoading = true
         isSearching = true
         if acrossAllSites, let configuration {
-            let sites = configuration.sites.filter(\.searchable)
+            let sites = availableSites.filter(\.searchable)
             globalSearchSites = sites
             globalSearchPageBySite = [:]
             globalSearchPageCountBySite = [:]
@@ -462,6 +504,7 @@ final class CatalogStore: ObservableObject {
         requestGeneration += 1
         sourceURL = ""
         selectedSiteKey = ""
+        removedSiteKeys = []
         selectParser("")
         configuration = nil
         categories = []
@@ -712,6 +755,10 @@ final class CatalogStore: ObservableObject {
 
     private static func siteKey(for address: String) -> String {
         "tvbox.selectedSite.\(storageSuffix(for: address))"
+    }
+
+    private static func removedSitesKey(for address: String) -> String {
+        "tvbox.removedSites.\(storageSuffix(for: address))"
     }
 
     private static func parserKey(for address: String) -> String {

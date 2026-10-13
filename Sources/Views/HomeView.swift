@@ -265,7 +265,7 @@ struct HomeView: View {
                 .foregroundStyle(Color.primary)
                 .autocorrectionDisabled()
                 .disabled(searchAcrossSites
-                    ? !(catalog.configuration?.sites.contains(where: \.searchable) ?? false)
+                    ? !catalog.availableSites.contains(where: \.searchable)
                     : catalog.selectedSite?.searchable == false)
                 #if os(iOS)
                 .textInputAutocapitalization(.never)
