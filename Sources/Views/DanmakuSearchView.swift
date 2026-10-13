@@ -17,6 +17,7 @@ struct DanmakuSearchView: View {
     @State private var episodeResults: [DanmakuEpisode] = []
     @State private var selectedAnime: DanmakuAnime?
     @State private var suggestedEpisodeIDs: Set<String> = []
+    @State private var autoMatchedTitle: String?
     @State private var isLoading = false
     @State private var message: String?
     @State private var requestGeneration = 0
@@ -109,7 +110,12 @@ struct DanmakuSearchView: View {
             }
             .task {
                 if query.isEmpty { query = initialQuery }
-                if !apiAddress.isEmpty { await search() }
+                guard !apiAddress.isEmpty else { return }
+                if shouldAutoMatchEpisode {
+                    await autoMatchCurrentEpisode()
+                } else {
+                    await search()
+                }
             }
             .onDisappear { requestGeneration += 1 }
         }
@@ -118,6 +124,16 @@ struct DanmakuSearchView: View {
     private var resultsList: some View {
         ScrollView {
             LazyVStack(spacing: 9) {
+                if autoMatchedTitle != nil {
+                    Button {
+                        Task { await search() }
+                    } label: {
+                        Label("不满意？手动搜索其他作品或集数", systemImage: "magnifyingglass")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(FocusAwareButtonStyle())
+                }
+
                 if let selectedAnime {
                     Button {
                         self.selectedAnime = nil
@@ -164,6 +180,11 @@ struct DanmakuSearchView: View {
 
     private var currentEpisodeNumber: Int? {
         DanmakuService.episodeNumber(in: currentEpisodeTitle)
+    }
+
+    private var shouldAutoMatchEpisode: Bool {
+        expectsEpisodeMatch || ["电视剧", "连续剧", "剧集", "番剧", "动漫", "动画", "series", "tv"]
+            .contains { mediaCategory.lowercased().contains($0) }
     }
 
     private var orderedEpisodeResults: [DanmakuEpisode] {
@@ -229,6 +250,7 @@ struct DanmakuSearchView: View {
         let generation = nextGeneration()
         isLoading = true
         message = "正在搜索作品…"
+        autoMatchedTitle = nil
         selectedAnime = nil
         episodeResults = []
         suggestedEpisodeIDs = []
@@ -241,6 +263,32 @@ struct DanmakuSearchView: View {
             guard generation == requestGeneration else { return }
             animeResults = []
             message = error.localizedDescription
+        }
+        if generation == requestGeneration { isLoading = false }
+    }
+
+    @MainActor
+    private func autoMatchCurrentEpisode() async {
+        let generation = nextGeneration()
+        isLoading = true
+        message = currentEpisodeNumber.map { "正在自动匹配第 \($0) 集弹幕…" } ?? "正在自动匹配当前集弹幕…"
+        do {
+            let match = try await service.automaticMatch(
+                title: initialQuery,
+                category: mediaCategory,
+                year: mediaYear,
+                episodeTitle: currentEpisodeTitle,
+                isSeries: shouldAutoMatchEpisode,
+                apiAddress: apiAddress
+            )
+            guard generation == requestGeneration else { return }
+            autoMatchedTitle = match.matchTitle
+            message = "已自动匹配并加载：\(match.matchTitle)"
+            onLoad(match.comments, match.matchTitle)
+        } catch {
+            guard generation == requestGeneration else { return }
+            autoMatchedTitle = nil
+            await search()
         }
         if generation == requestGeneration { isLoading = false }
     }
