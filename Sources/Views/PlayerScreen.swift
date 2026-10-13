@@ -634,7 +634,13 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
 
     private static func clockString(milliseconds: Int32) -> String {
         let seconds = max(0, Int(milliseconds / 1_000))
-        return String(format: "%02d:%02d", seconds / 60, seconds % 60)
+        let hours = seconds / 3_600
+        let minutes = (seconds / 60) % 60
+        let remainingSeconds = seconds % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, remainingSeconds)
+        }
+        return String(format: "%02d:%02d", seconds / 60, remainingSeconds)
     }
 }
 
@@ -738,7 +744,8 @@ struct PlayerScreen: View {
                                         Spacer(minLength: 22)
                                         controlPanel(compact: geometry.size.width < 600)
                                     }
-                                    .padding(.horizontal, playerPadding(compact: geometry.size.width < 600))
+                                    .padding(.leading, playerPadding(compact: geometry.size.width < 600) + geometry.safeAreaInsets.leading)
+                                    .padding(.trailing, playerPadding(compact: geometry.size.width < 600) + geometry.safeAreaInsets.trailing)
                                     .padding(.top, playerPadding(compact: geometry.size.width < 600))
                                     .padding(.bottom, playerPadding(compact: geometry.size.width < 600))
                                 }
@@ -1340,8 +1347,7 @@ struct PlayerScreen: View {
             #endif
             #if os(iOS)
             Button(action: toggleOrientation) {
-                Label("横竖屏", systemImage: "rotate.right")
-                    .font(.system(size: 12, weight: .semibold))
+                trackMenuLabel(title: "横竖屏", systemImage: "rotate.right")
             }
             .buttonStyle(PlayerControlButtonStyle())
             .accessibilityLabel("切换横竖屏")
@@ -1727,7 +1733,13 @@ struct PlayerScreen: View {
         guard duration != "LIVE", !parts.isEmpty else { return "00:00" }
         let total = parts.reduce(0) { $0 * 60 + $1 }
         let seconds = Int(Double(total) * min(1, max(0, fraction)))
-        return String(format: "%02d:%02d", seconds / 60, seconds % 60)
+        let hours = seconds / 3_600
+        let minutes = (seconds / 60) % 60
+        let remainingSeconds = seconds % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, remainingSeconds)
+        }
+        return String(format: "%02d:%02d", seconds / 60, remainingSeconds)
     }
 
     private static func rateLabel(_ rate: Double) -> String {
