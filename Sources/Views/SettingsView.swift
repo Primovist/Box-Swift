@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var catalog: CatalogStore
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @AppStorage("tvbox.autoNext") private var autoNextEpisode = true
     @AppStorage("tvbox.skipOpeningSeconds") private var skipOpeningSeconds = 0
     @State private var endpoint = ""
@@ -12,7 +13,12 @@ struct SettingsView: View {
 
     var body: some View {
         GeometryReader { geometry in
+            #if os(iOS)
+            let wide = geometry.size.width >= 900
+                || (horizontalSizeClass == .compact && geometry.size.width >= 700)
+            #else
             let wide = geometry.size.width >= geometry.size.height
+            #endif
             ZStack {
                 ScreenBackground()
                 ScrollView {
@@ -29,6 +35,7 @@ struct SettingsView: View {
                     .padding(.bottom, 48)
                     .frame(maxWidth: .infinity)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .onAppear {
                 endpoint = catalog.sourceURL
@@ -145,6 +152,7 @@ struct SettingsView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(.white.opacity(0.08), lineWidth: 1))
     }
@@ -159,6 +167,7 @@ struct SettingsView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 3)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var playerPreferencesSection: some View {
@@ -189,6 +198,7 @@ struct SettingsView: View {
                 .foregroundStyle(Color.tvboxMuted)
         }
         .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(.white.opacity(0.08), lineWidth: 1))
     }
@@ -209,6 +219,7 @@ struct SettingsView: View {
             .buttonStyle(.bordered)
         }
         .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(.white.opacity(0.08), lineWidth: 1))
         .alert("海报缓存", isPresented: Binding(
@@ -229,10 +240,12 @@ struct SettingsView: View {
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .keyboardType(.URL)
+            .frame(maxWidth: .infinity, alignment: .leading)
         #else
         TextField(title, text: text)
             .textFieldStyle(.plain)
             .autocorrectionDisabled()
+            .frame(maxWidth: .infinity, alignment: .leading)
         #endif
     }
 
