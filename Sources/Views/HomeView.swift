@@ -1,5 +1,13 @@
 import SwiftUI
 
+private struct HomeFieldFrameKey: PreferenceKey {
+    static var defaultValue = CGRect.zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if next != .zero { value = next }
+    }
+}
+
 private enum HomeSection: String, CaseIterable, Identifiable {
     case video = "影视"
     case live = "直播"
@@ -136,11 +144,6 @@ struct HomeView: View {
                 }
             }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background {
-                    Color.clear
-                        .contentShape(Rectangle())
-                        .onTapGesture { isSearchFocused = false }
-                }
                 .navigationDestination(for: MediaItem.self) { item in
                     DetailView(item: item)
                         .toolbar(.visible, for: .navigationBar)
@@ -182,6 +185,12 @@ struct HomeView: View {
         .id(selectedSection)
         #if os(tvOS)
         .scrollBounceBehavior(.basedOnSize)
+        #endif
+        #if os(iOS)
+        .simultaneousGesture(TapGesture().onEnded {
+            if selectedSection == .search { isSearchFocused = false }
+        })
+        .scrollDismissesKeyboard(.interactively)
         #endif
         .transition(.opacity)
     }
@@ -608,6 +617,7 @@ private struct LiveGroupPasswordSheet: View {
     let onUnlock: () -> Void
     @State private var password = ""
     @State private var isInvalid = false
+    @State private var passwordFieldFrame = CGRect.zero
 
     var body: some View {
         NavigationStack {
@@ -615,17 +625,30 @@ private struct LiveGroupPasswordSheet: View {
                 Section(group.name) {
                     SecureField("输入分组密码", text: $password)
                         .focused($isPasswordFocused)
+                        #if os(iOS)
+                        .background {
+                            GeometryReader { proxy in
+                                Color.clear.preference(key: HomeFieldFrameKey.self, value: proxy.frame(in: .global))
+                            }
+                        }
+                        #endif
                     if isInvalid {
                         Text("密码不正确。")
                             .foregroundStyle(.orange)
                     }
                 }
             }
-            .background {
-                Color.clear
-                    .contentShape(Rectangle())
-                    .onTapGesture { isPasswordFocused = false }
-            }
+            #if os(iOS)
+            .simultaneousGesture(
+                SpatialTapGesture(coordinateSpace: .global)
+                    .onEnded { tap in
+                        guard !passwordFieldFrame.contains(tap.location) else { return }
+                        isPasswordFocused = false
+                    }
+            )
+            .onPreferenceChange(HomeFieldFrameKey.self) { passwordFieldFrame = $0 }
+            .scrollDismissesKeyboard(.interactively)
+            #endif
             .navigationTitle("受限直播分组")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

@@ -10,7 +10,7 @@ struct VLCVideoSurface: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> UIView {
-        let view = UIView(frame: .zero)
+        let view = VLCVideoHostView(frame: .zero)
         view.backgroundColor = .black
         view.isUserInteractionEnabled = false
         let drawable = VLCVideoDrawable(hostView: view, session: session)
@@ -58,21 +58,33 @@ struct VLCVideoSurface: UIViewRepresentable {
 
 fileprivate final class VLCVideoDrawable: NSObject, VLCDrawable {
     let id = UUID()
-    private let hostView: UIView
+    private let hostView: VLCVideoHostView
     private weak var session: VLCPlaybackSession?
 
-    init(hostView: UIView, session: VLCPlaybackSession) {
+    init(hostView: VLCVideoHostView, session: VLCPlaybackSession) {
         self.hostView = hostView
         self.session = session
         super.init()
     }
 
     func addSubview(_ view: UIView) {
+        view.frame = hostView.bounds
+        view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        hostView.videoView = view
         hostView.addSubview(view)
     }
 
     func bounds() -> CGRect {
         hostView.bounds
+    }
+}
+
+private final class VLCVideoHostView: UIView {
+    weak var videoView: UIView?
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        videoView?.frame = bounds
     }
 }
 

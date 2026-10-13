@@ -1,5 +1,14 @@
 import SwiftUI
 
+private struct SettingsFieldFrameKey: PreferenceKey {
+    static var defaultValue = CGRect.zero
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if next != .zero { value = next }
+    }
+}
+
 struct SettingsView: View {
     @EnvironmentObject private var catalog: CatalogStore
     @AppStorage("tvbox.autoNext") private var autoNextEpisode = true
@@ -10,6 +19,7 @@ struct SettingsView: View {
     @State private var cacheMessage: String?
     @State private var isConfirmingServerRemoval = false
     @State private var isConfirmingCacheClear = false
+    @State private var endpointFrame = CGRect.zero
 
     private var liveChannelCountText: String {
         if catalog.isLoadingLive { return "载入中…" }
@@ -26,6 +36,7 @@ struct SettingsView: View {
                     urlField("https://example.com/tvbox.json", text: $endpoint)
                     Divider()
                     Button {
+                        isEndpointFocused = false
                         Task { await catalog.loadConfiguration(from: endpoint, restoreRemovedSites: true) }
                     } label: {
                         Group {
@@ -46,6 +57,7 @@ struct SettingsView: View {
                         Menu {
                             ForEach(catalog.savedSourceURLs, id: \.self) { address in
                                 Button {
+                                    isEndpointFocused = false
                                     endpoint = address
                                     Task { await catalog.loadConfiguration(from: address) }
                                 } label: {
@@ -56,8 +68,10 @@ struct SettingsView: View {
                         } label: {
                             HStack(spacing: 8) {
                                 Text("已登记服务器")
+                                Spacer(minLength: 12)
                                 Text("\(catalog.savedSourceURLs.count)")
                                     .foregroundStyle(.secondary)
+                                    .monospacedDigit()
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -90,18 +104,9 @@ struct SettingsView: View {
                         }
                     }
 
-                    HStack(spacing: 8) {
-                        Text("可用站点")
-                        Text("\(catalog.availableSites.count)").foregroundStyle(.secondary)
-                    }
-                    HStack(spacing: 8) {
-                        Text("可用解析器")
-                        Text("\(configuration.parsers.filter { [0, 1].contains($0.type) }.count)").foregroundStyle(.secondary)
-                    }
-                    HStack(spacing: 8) {
-                        Text("直播频道")
-                        Text(liveChannelCountText).foregroundStyle(.secondary)
-                    }
+                    statisticRow("可用站点", value: "\(catalog.availableSites.count)")
+                    statisticRow("可用解析器", value: "\(configuration.parsers.filter { [0, 1].contains($0.type) }.count)")
+                    statisticRow("直播频道", value: liveChannelCountText)
                     if !configuration.epgURL.isEmpty {
                         Text("已配置节目单")
                             .foregroundStyle(.secondary)
@@ -133,11 +138,7 @@ struct SettingsView: View {
             }
 
             Section("图片缓存") {
-                HStack(spacing: 8) {
-                    Text("已缓存")
-                    Text(ByteCountFormatter.string(fromByteCount: imageCacheSize, countStyle: .file))
-                        .foregroundStyle(.secondary)
-                }
+                statisticRow("已缓存", value: ByteCountFormatter.string(fromByteCount: imageCacheSize, countStyle: .file))
                 Text("包括影视海报和直播台标。清理后会在下次显示时重新下载。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -148,11 +149,17 @@ struct SettingsView: View {
                 }
             }
         }
-        .background {
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture { isEndpointFocused = false }
-        }
+        #if os(iOS)
+        .simultaneousGesture(
+            SpatialTapGesture(coordinateSpace: .global)
+                .onEnded { tap in
+                    guard !endpointFrame.contains(tap.location) else { return }
+                    isEndpointFocused = false
+                }
+        )
+        .onPreferenceChange(SettingsFieldFrameKey.self) { endpointFrame = $0 }
+        .scrollDismissesKeyboard(.interactively)
+        #endif
         .formStyle(.grouped)
         .frame(maxWidth: 1120)
         .frame(maxWidth: .infinity)
@@ -206,10 +213,26 @@ struct SettingsView: View {
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .keyboardType(.URL)
+            .background {
+                GeometryReader { proxy in
+                    Color.clear.preference(key: SettingsFieldFrameKey.self, value: proxy.frame(in: .global))
+                }
+            }
         #else
         TextField(title, text: text)
             .focused($isEndpointFocused)
             .autocorrectionDisabled()
         #endif
+    }
+
+    private func statisticRow(_ title: String, value: String) -> some View {
+        HStack(spacing: 8) {
+            Text(title)
+            Spacer(minLength: 12)
+            Text(value)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .multilineTextAlignment(.trailing)
+        }
     }
 }

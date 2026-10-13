@@ -1041,6 +1041,10 @@ struct PlayerScreen: View {
     @State private var livePrograms: [TVBoxEPGProgram] = []
     @State private var isLoadingLiveGuide = false
     @State private var liveGuideMessage: String?
+    #if os(iOS)
+    @State private var orientationBeforeManualChange: UIInterfaceOrientation?
+    @State private var orientationScene: UIWindowScene?
+    #endif
     @AppStorage("tvbox.danmakuEnabled") private var danmakuEnabled = true
     @AppStorage("tvbox.danmakuAPIURL") private var danmakuAPIAddress = ""
     @AppStorage("tvbox.autoNext") private var autoNextEpisode = true
@@ -1165,10 +1169,12 @@ struct PlayerScreen: View {
                                     .padding(.horizontal, playerPadding(compact: true))
                                     .padding(.top, 8)
                             }
-                            ScrollView {
-                                vodPortraitDetails(item)
+                            GeometryReader { detailsArea in
+                                ScrollView {
+                                    vodPortraitDetails(item, minimumHeight: detailsArea.size.height)
+                                }
                             }
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                         } else {
                             VStack(spacing: 0) {
                                 Spacer(minLength: 0)
@@ -1231,6 +1237,23 @@ struct PlayerScreen: View {
                 }
                 #endif
             }
+            #if os(iOS)
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 12, coordinateSpace: .local)
+                    .onEnded { value in
+                        let delta = value.translation
+                        let videoHeight = geometry.size.width * 9 / 16
+                        guard isPortraitLayout,
+                              (liveContext != nil || session.request.item != nil),
+                              value.startLocation.y >= videoHeight,
+                              value.startLocation.x <= max(28, geometry.safeAreaInsets.leading + 18),
+                              delta.width >= 90,
+                              abs(delta.height) < 100,
+                              delta.width > abs(delta.height) else { return }
+                        closePlayer()
+                    }
+            )
+            #endif
             .foregroundStyle(.white)
         }
         .onAppear {
@@ -1253,6 +1276,9 @@ struct PlayerScreen: View {
             interactionHUDTask?.cancel()
             vodSelectionTask?.cancel()
             vodSelectionTask = nil
+            #if os(iOS)
+            restoreOrientationAfterPlayback()
+            #endif
             session.stop()
         }
         .onReceive(historySaveTimer) { _ in
@@ -1402,7 +1428,7 @@ struct PlayerScreen: View {
             if landscapeLivePanel != nil {
                 revealControls()
             } else {
-                dismiss()
+                closePlayer()
             }
         }
         .onPlayPauseCommand {
@@ -1537,11 +1563,39 @@ struct PlayerScreen: View {
         guard let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
             .first(where: { $0.activationState == .foregroundActive }) else { return }
+        if orientationBeforeManualChange == nil {
+            orientationBeforeManualChange = scene.interfaceOrientation
+            orientationScene = scene
+        }
         let requested: UIInterfaceOrientationMask = scene.interfaceOrientation.isLandscape ? .portrait : .landscape
         scene.requestGeometryUpdate(.iOS(interfaceOrientations: requested)) { _ in }
     }
 
+    private func restoreOrientationAfterPlayback() {
+        guard !showingDanmakuSearch, !showingDanmakuSettings, !showingSubtitleTracks else { return }
+        guard let orientationBeforeManualChange else { return }
+        self.orientationBeforeManualChange = nil
+        defer { orientationScene = nil }
+        let mask: UIInterfaceOrientationMask
+        switch orientationBeforeManualChange {
+        case .portrait, .portraitUpsideDown:
+            mask = .portrait
+        case .landscapeLeft, .landscapeRight:
+            mask = .landscape
+        default:
+            return
+        }
+        orientationScene?.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { _ in }
+    }
+
     #endif
+
+    private func closePlayer() {
+        #if os(iOS)
+        restoreOrientationAfterPlayback()
+        #endif
+        dismiss()
+    }
 
     @MainActor
     private func toggleControlsVisibility() {
@@ -1613,7 +1667,7 @@ struct PlayerScreen: View {
 
     private var header: some View {
         HStack(spacing: 14) {
-            Button { dismiss() } label: {
+            Button { closePlayer() } label: {
                 Label("返回", systemImage: "chevron.left")
                     .font(.system(size: 14, weight: .semibold))
                     .padding(.horizontal, 15)
@@ -1651,7 +1705,7 @@ struct PlayerScreen: View {
         }
     }
 
-    private func vodPortraitDetails(_ item: MediaItem) -> some View {
+    private func vodPortraitDetails(_ item: MediaItem, minimumHeight: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -1686,17 +1740,17 @@ struct PlayerScreen: View {
                     .foregroundStyle(Color.tvboxMuted)
                     .lineLimit(2)
             }
-            vodPlaylistContent(compact: true)
+            vodPlaylistContent(scrollEpisodes: false)
         }
         .padding(.horizontal, 14)
         .padding(.top, 14)
-        .padding(.bottom, 20)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .padding(.bottom, 14)
+        .frame(maxWidth: .infinity, minHeight: minimumHeight, alignment: .topLeading)
         .background(Color.tvboxSurface)
         .foregroundStyle(Color(uiColor: .label))
     }
 
-    private func vodPlaylistContent(compact: Bool) -> some View {
+    private func vodPlaylistContent(scrollEpisodes: Bool) -> some View {
         VStack(alignment: .leading, spacing: 11) {
             if let item = session.request.item, item.lines.count > 1 {
                 Text("片源")
@@ -1737,27 +1791,29 @@ struct PlayerScreen: View {
             }
             Text("选集")
                 .font(.subheadline.weight(.semibold))
-            ScrollViewReader { proxy in
-                ScrollView(compact ? .horizontal : .vertical, showsIndicators: false) {
-                    if compact {
-                        HStack(spacing: 8) { vodEpisodeButtons }
-                    } else {
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 2), spacing: 8) {
+            if scrollEpisodes {
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical, showsIndicators: false) {
+                        LazyVStack(alignment: .leading, spacing: 8) {
                             vodEpisodeButtons
                         }
                     }
-                }
-                .task {
-                    #if os(tvOS)
-                    if !compact,
-                       session.request.queue.indices.contains(session.request.queueIndex) {
-                        let episode = session.request.queue[session.request.queueIndex]
-                        await Task.yield()
-                        proxy.scrollTo(episode.id, anchor: .center)
-                        await Task.yield()
-                        livePanelFocusTarget = "vod:\(episode.id)"
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .task {
+                        #if os(tvOS)
+                        if session.request.queue.indices.contains(session.request.queueIndex) {
+                            let episode = session.request.queue[session.request.queueIndex]
+                            await Task.yield()
+                            proxy.scrollTo(episode.id, anchor: .center)
+                            await Task.yield()
+                            livePanelFocusTarget = "vod:\(episode.id)"
+                        }
+                        #endif
                     }
-                    #endif
+                }
+            } else {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    vodEpisodeButtons
                 }
             }
             if isSwitchingEpisode {
@@ -1779,12 +1835,13 @@ struct PlayerScreen: View {
                         Image(systemName: "checkmark")
                     }
                     Text(episode.title)
-                        .lineLimit(1)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .font(vodChoiceFont)
                 .foregroundStyle(index == session.request.queueIndex ? .white : Color.primary)
                 .padding(.horizontal, 12)
-                .frame(minHeight: vodChoiceMinHeight)
+                .frame(maxWidth: .infinity, minHeight: vodChoiceMinHeight, alignment: .leading)
                 .background(index == session.request.queueIndex ? Color.tvboxAccent : Color.tvboxSurface,
                             in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             }
@@ -1925,7 +1982,7 @@ struct PlayerScreen: View {
         case .sources:
             liveSourceContent
         case .playlist:
-            vodPlaylistContent(compact: false)
+            vodPlaylistContent(scrollEpisodes: true)
         }
     }
 

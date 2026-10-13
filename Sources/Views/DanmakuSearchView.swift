@@ -1,5 +1,13 @@
 import SwiftUI
 
+private struct DanmakuFieldFrameKey: PreferenceKey {
+    static var defaultValue = CGRect.zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if next != .zero { value = next }
+    }
+}
+
 struct DanmakuSearchView: View {
     @Environment(\.dismiss) private var dismiss
     @FocusState private var isSearchFocused: Bool
@@ -77,11 +85,10 @@ struct DanmakuSearchView: View {
                     .padding(.vertical, compact ? 8 : 18)
                     .frame(maxWidth: 1000, maxHeight: .infinity, alignment: .topLeading)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background {
-                        Color.clear
-                            .contentShape(Rectangle())
-                            .onTapGesture { isSearchFocused = false }
-                    }
+                    #if os(iOS)
+                    .simultaneousGesture(TapGesture().onEnded { isSearchFocused = false })
+                    .scrollDismissesKeyboard(.interactively)
+                    #endif
                 }
             }
             .navigationTitle("在线搜索弹幕")
@@ -303,6 +310,7 @@ struct DanmakuPreferencesForm: View {
     @AppStorage("tvbox.danmakuSize") private var sizeScale = 0.8
     @AppStorage("tvbox.danmakuLines") private var maxLines = 3
     @AppStorage("tvbox.danmakuRandomColor") private var randomColor = false
+    @State private var addressFieldFrame = CGRect.zero
 
     var body: some View {
         Form {
@@ -328,11 +336,17 @@ struct DanmakuPreferencesForm: View {
                 ), range: 1...15, suffix: " 行", integer: true)
             }
         }
-        .background {
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture { isAddressFocused = false }
-        }
+        #if os(iOS)
+        .simultaneousGesture(
+            SpatialTapGesture(coordinateSpace: .global)
+                .onEnded { tap in
+                    guard !addressFieldFrame.contains(tap.location) else { return }
+                    isAddressFocused = false
+                }
+        )
+        .onPreferenceChange(DanmakuFieldFrameKey.self) { addressFieldFrame = $0 }
+        .scrollDismissesKeyboard(.interactively)
+        #endif
         .formStyle(.grouped)
     }
 
@@ -345,6 +359,11 @@ struct DanmakuPreferencesForm: View {
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .keyboardType(.URL)
+            .background {
+                GeometryReader { proxy in
+                    Color.clear.preference(key: DanmakuFieldFrameKey.self, value: proxy.frame(in: .global))
+                }
+            }
         #else
         TextField(title, text: text)
             .focused($isAddressFocused)
