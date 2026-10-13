@@ -471,7 +471,7 @@ struct LiveCatchupWindow: Equatable {
     var supportsServerSeeking: Bool {
         let hasStart = template.contains("${(b)") || template.contains("${start}") || template.contains("{start}")
         let hasEnd = template.contains("${(e)") || template.contains("${end}") || template.contains("{end}")
-        (hasStart && hasEnd) || sourceAddress.contains("PLTV/8888")
+        return (hasStart && hasEnd) || sourceAddress.contains("PLTV/8888")
     }
 
     func url(startingAtMilliseconds offset: Int = 0) -> URL? {
