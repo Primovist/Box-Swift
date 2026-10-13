@@ -60,82 +60,88 @@ struct HomeView: View {
                         .padding(.bottom, 8)
                         .frame(maxWidth: .infinity)
                         #endif
-                        if section == .settings {
-                            SettingsView()
-                        } else {
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: wide ? 28 : 20) {
-                                #if os(iOS)
-                                header(wide: wide)
-                                #endif
+                        ZStack {
+                            if section == .settings {
+                                SettingsView()
+                                    .transition(.opacity)
+                            } else {
+                                ScrollView {
+                                    VStack(alignment: .leading, spacing: wide ? 28 : 20) {
+                                        #if os(iOS)
+                                        header(wide: wide)
+                                        #endif
 
-                                if section == .search {
-                                    searchField
-                                    searchHistorySection
-                                    if catalog.isSearching {
-                                        if !currentItems.isEmpty {
-                                            contentGrid(currentItems, wide: wide, titleOverride: "搜索结果")
-                                        } else if !catalog.isLoading {
+                                        if section == .search {
+                                            searchField
+                                            searchHistorySection
+                                            if catalog.isSearching {
+                                                if !currentItems.isEmpty {
+                                                    contentGrid(currentItems, wide: wide, titleOverride: "搜索结果")
+                                                } else if !catalog.isLoading {
+                                                    emptyState
+                                                }
+                                            }
+                                            savedItemsSection("观看历史", items: catalog.historyItems.map(\.item), wide: wide, history: true)
+                                            savedItemsSection("我的收藏", items: catalog.favoriteItems, wide: wide)
+                                        }
+
+                                        if section == .video {
+                                            if !catalog.categories.isEmpty { categoryPicker(wide: wide) }
+                                            if catalog.selectedSite?.filterable == true,
+                                               let category = catalog.selectedCategory,
+                                               !category.filters.isEmpty {
+                                                filterPicker(category: category)
+                                            }
+                                            if wide, catalog.selectedCategoryID.isEmpty, searchText.isEmpty,
+                                               let featured = currentItems.first {
+                                                NavigationLink(value: featured) { featuredCard(featured, wide: wide) }
+                                                    .buttonStyle(FocusAwareButtonStyle())
+                                            }
+                                        }
+
+                                        if section == .live {
+                                            liveContent(wide: wide)
+                                        } else if section == .video && !currentItems.isEmpty {
+                                            contentGrid(currentItems, wide: wide)
+                                        } else if section == .video && !catalog.isLoading {
                                             emptyState
                                         }
-                                    }
-                                    savedItemsSection("观看历史", items: catalog.historyItems.map(\.item), wide: wide, history: true)
-                                    savedItemsSection("我的收藏", items: catalog.favoriteItems, wide: wide)
-                                }
 
-                                if section == .video {
-                                    if !catalog.categories.isEmpty { categoryPicker(wide: wide) }
-                                    if catalog.selectedSite?.filterable == true,
-                                       let category = catalog.selectedCategory,
-                                       !category.filters.isEmpty {
-                                        filterPicker(category: category)
+                                        if catalog.isLoading {
+                                            HStack { ProgressView().tint(.white); Text("正在载入…").foregroundStyle(Color.tvboxMuted) }
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 20)
+                                        }
+                                        if let message = catalog.loadMessage {
+                                            Text(message)
+                                                .font(.system(size: 12, weight: .medium))
+                                                .foregroundStyle(Color.tvboxMuted)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                        }
+                                        footer
                                     }
-                                    if wide, catalog.selectedCategoryID.isEmpty, searchText.isEmpty,
-                                       let featured = currentItems.first {
-                                        NavigationLink(value: featured) { featuredCard(featured, wide: wide) }
-                                            .buttonStyle(FocusAwareButtonStyle())
-                                    }
+                                    .frame(maxWidth: 1500)
+                                    .padding(.horizontal, wide ? 72 : 20)
+                                    .padding(.top, wide ? 28 : 18)
+                                    .padding(.bottom, 48)
+                                    .frame(maxWidth: .infinity)
                                 }
-
-                                if section == .live {
-                                    liveContent(wide: wide)
-                                } else if section == .video && !currentItems.isEmpty {
-                                    contentGrid(currentItems, wide: wide)
-                                } else if section == .video && !catalog.isLoading {
-                                    emptyState
+                                .id(section)
+                                .scrollBounceBehavior(section == .live ? .never : .basedOnSize)
+                                .transition(.opacity)
+                                #if os(iOS)
+                                .onScrollGeometryChange(for: HomeScrollMetrics.self) { geometry in
+                                    HomeScrollMetrics(
+                                        offsetFromTop: max(0, geometry.contentOffset.y + geometry.contentInsets.top),
+                                        maximumOffset: max(0, geometry.contentSize.height - geometry.containerSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom)
+                                    )
+                                } action: { oldMetrics, newMetrics in
+                                    updateSectionNavigation(oldMetrics: oldMetrics, newMetrics: newMetrics)
                                 }
-
-                                if catalog.isLoading {
-                                    HStack { ProgressView().tint(.white); Text("正在载入…").foregroundStyle(Color.tvboxMuted) }
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 20)
-                                }
-                                if let message = catalog.loadMessage {
-                                    Text(message)
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundStyle(Color.tvboxMuted)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                                footer
+                                #endif
                             }
-                            .frame(maxWidth: 1500)
-                            .padding(.horizontal, wide ? 72 : 20)
-                            .padding(.top, wide ? 28 : 18)
-                            .padding(.bottom, 48)
-                            .frame(maxWidth: .infinity)
                         }
-                        .id(section)
-                        #if os(iOS)
-                        .onScrollGeometryChange(for: HomeScrollMetrics.self) { geometry in
-                            HomeScrollMetrics(
-                                offsetFromTop: max(0, geometry.contentOffset.y + geometry.contentInsets.top),
-                                maximumOffset: max(0, geometry.contentSize.height - geometry.containerSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom)
-                            )
-                        } action: { oldMetrics, newMetrics in
-                            updateSectionNavigation(oldMetrics: oldMetrics, newMetrics: newMetrics)
-                        }
-                        #endif
-                        }
+                        .animation(.easeInOut(duration: 0.22), value: section)
                     }
                 }
                 .navigationDestination(for: MediaItem.self) { item in
@@ -394,6 +400,7 @@ struct HomeView: View {
         .frame(height: 78, alignment: .bottom)
         .padding(.bottom, 4)
         .animation(.snappy(duration: 0.25), value: isSectionNavigationCollapsed)
+        .animation(.easeInOut(duration: 0.18), value: section)
     }
 
     private func selectSection(_ value: HomeSection) {
@@ -692,10 +699,10 @@ struct HomeView: View {
     private func liveChannelLabel(_ channel: TVBoxLiveChannel) -> some View {
         HStack(spacing: 12) {
             if let logoURL = channel.logoURL {
-                AsyncImage(url: logoURL) { image in
-                    image.resizable().scaledToFit()
-                } placeholder: {
-                    Image(systemName: "dot.radiowaves.left.and.right").foregroundStyle(Color.tvboxCyan)
+                ZStack {
+                    Image(systemName: "dot.radiowaves.left.and.right")
+                        .foregroundStyle(Color.tvboxCyan)
+                    CachedArtworkImage(url: logoURL, contentMode: .fit)
                 }
                 .frame(width: 34, height: 34)
                 .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
@@ -713,7 +720,7 @@ struct HomeView: View {
             Image(systemName: "play.fill").font(.system(size: 11)).foregroundStyle(Color.tvboxAccent)
         }
         .padding(15)
-        .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: 64, maxHeight: 64, alignment: .leading)
         .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
@@ -884,7 +891,7 @@ private struct LiveEPGSheet: View {
 
     private var dateOptions: [Date] {
         let calendar = Calendar(identifier: .gregorian)
-        return (-7...1).compactMap { calendar.date(byAdding: .day, value: $0, to: calendar.startOfDay(for: Date())) }
+        return (-6...1).compactMap { calendar.date(byAdding: .day, value: $0, to: calendar.startOfDay(for: Date())) }
     }
 
     var body: some View {

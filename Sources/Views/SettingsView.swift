@@ -6,7 +6,7 @@ struct SettingsView: View {
     @AppStorage("tvbox.autoNext") private var autoNextEpisode = true
     @AppStorage("tvbox.skipOpeningSeconds") private var skipOpeningSeconds = 0
     @State private var endpoint = ""
-    @State private var posterCacheSize: Int64 = 0
+    @State private var imageCacheSize: Int64 = 0
     @State private var cacheMessage: String?
     @State private var isConfirmingRestore = false
     @State private var isConfirmingCacheClear = false
@@ -27,7 +27,7 @@ struct SettingsView: View {
                         sourceSection
                         scopeSection
                         playerPreferencesSection
-                        posterCacheSection
+                        imageCacheSection
                     }
                     .frame(maxWidth: 1120, alignment: .leading)
                     .padding(.horizontal, wide ? 72 : 20)
@@ -39,7 +39,7 @@ struct SettingsView: View {
             }
             .onAppear {
                 endpoint = catalog.sourceURL
-                Task { posterCacheSize = await PosterImageCache.cachedSize() }
+                Task { imageCacheSize = await ArtworkImageCache.cachedSize() }
             }
             .onChange(of: catalog.sourceURL) { _, value in
                 endpoint = value
@@ -53,12 +53,12 @@ struct SettingsView: View {
             } message: {
                 Text("当前片源和目录状态将切换为内置演示数据。已保存的片源地址仍会保留。")
             }
-            .confirmationDialog("清除海报缓存？", isPresented: $isConfirmingCacheClear, titleVisibility: .visible) {
+            .confirmationDialog("清除图片缓存？", isPresented: $isConfirmingCacheClear, titleVisibility: .visible) {
                 Button("清除缓存", role: .destructive) {
                     Task {
-                        await PosterImageCache.clear()
-                        posterCacheSize = await PosterImageCache.cachedSize()
-                        cacheMessage = "海报缓存已清理。"
+                        await ArtworkImageCache.clear()
+                        imageCacheSize = await ArtworkImageCache.cachedSize()
+                        cacheMessage = "图片缓存已清理。"
                     }
                 }
                 Button("取消", role: .cancel) {}
@@ -203,12 +203,12 @@ struct SettingsView: View {
         .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(.white.opacity(0.08), lineWidth: 1))
     }
 
-    private var posterCacheSection: some View {
+    private var imageCacheSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("海报缓存", systemImage: "photo.stack")
+            Label("图片缓存", systemImage: "photo.stack")
                 .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundStyle(Color.primary)
-            Text("已缓存 \(ByteCountFormatter.string(fromByteCount: posterCacheSize, countStyle: .file))。清理后，海报会在下次显示时重新下载。")
+            Text("已缓存 \(ByteCountFormatter.string(fromByteCount: imageCacheSize, countStyle: .file))，包括影视海报和直播台标。清理后会在下次显示时重新下载。")
                 .font(.system(size: 12))
                 .foregroundStyle(Color.tvboxMuted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -222,7 +222,7 @@ struct SettingsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(.white.opacity(0.08), lineWidth: 1))
-        .alert("海报缓存", isPresented: Binding(
+        .alert("图片缓存", isPresented: Binding(
             get: { cacheMessage != nil },
             set: { if !$0 { cacheMessage = nil } }
         )) {

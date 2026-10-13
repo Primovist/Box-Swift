@@ -30,7 +30,7 @@ struct MediaArtwork: View {
                 if let posterURL = item.posterURL {
                     ZStack {
                         LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
-                        CachedPosterImage(url: posterURL)
+                        CachedArtworkImage(url: posterURL)
                     }
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .clipped()
@@ -67,7 +67,7 @@ struct MediaArtwork: View {
 }
 
 @MainActor
-enum PosterImageCache {
+enum ArtworkImageCache {
     private static let memory: NSCache<NSURL, UIImage> = {
         let cache = NSCache<NSURL, UIImage>()
         cache.totalCostLimit = 96 * 1024 * 1024
@@ -84,7 +84,7 @@ enum PosterImageCache {
         let currentGeneration = generation
         let key = cacheKey(for: url)
         let task = Task<UIImage?, Never> {
-            if let data = await PosterDiskStore.shared.data(for: key), let image = UIImage(data: data) {
+            if let data = await ArtworkDiskStore.shared.data(for: key), let image = UIImage(data: data) {
                 await store(image, data: data, for: url, key: key, token: token, generation: currentGeneration)
                 return image
             }
@@ -116,18 +116,18 @@ enum PosterImageCache {
         inFlight.values.forEach { $0.1.cancel() }
         inFlight.removeAll()
         memory.removeAllObjects()
-        await PosterDiskStore.shared.clear()
+        await ArtworkDiskStore.shared.clear()
     }
 
     static func cachedSize() async -> Int64 {
-        await PosterDiskStore.shared.cachedSize()
+        await ArtworkDiskStore.shared.cachedSize()
     }
 
     private static func store(_ image: UIImage, data: Data, for url: URL, key: String, token: UUID, generation taskGeneration: Int) async {
         guard generation == taskGeneration else { return }
         let decodedCost = Int(image.size.width * image.scale * image.size.height * image.scale * 4)
         memory.setObject(image, forKey: url as NSURL, cost: decodedCost)
-        await PosterDiskStore.shared.write(data, for: key, generation: taskGeneration)
+        await ArtworkDiskStore.shared.write(data, for: key, generation: taskGeneration)
         if inFlight[url]?.0 == token { inFlight[url] = nil }
     }
 
@@ -139,8 +139,8 @@ enum PosterImageCache {
     }
 }
 
-private actor PosterDiskStore {
-    static let shared = PosterDiskStore()
+private actor ArtworkDiskStore {
+    static let shared = ArtworkDiskStore()
     private var generation = 0
 
     private var directory: URL {
@@ -175,8 +175,9 @@ private actor PosterDiskStore {
     }
 }
 
-private struct CachedPosterImage: View {
+struct CachedArtworkImage: View {
     let url: URL
+    var contentMode: ContentMode = .fill
     @State private var image: UIImage?
 
     var body: some View {
@@ -184,14 +185,14 @@ private struct CachedPosterImage: View {
             if let image {
                 Image(uiImage: image)
                     .resizable()
-                    .scaledToFill()
+                    .aspectRatio(contentMode: contentMode)
             } else {
                 Color.clear
             }
         }
         .task(id: url) {
             let requestedURL = url
-            let loadedImage = await PosterImageCache.image(for: requestedURL)
+            let loadedImage = await ArtworkImageCache.image(for: requestedURL)
             guard !Task.isCancelled, requestedURL == url else { return }
             image = loadedImage
         }
@@ -211,12 +212,12 @@ struct MediaCard: View {
                     .foregroundStyle(Color.primary)
                     .lineLimit(1)
                 let metadata = item.subtitle.isEmpty ? item.category : item.subtitle
-                if !metadata.isEmpty {
-                    Text(metadata)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color.tvboxMuted)
-                        .lineLimit(1)
-                }
+                Text(metadata.isEmpty ? " " : metadata)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.tvboxMuted)
+                    .lineLimit(1)
+                    .frame(height: 15, alignment: .topLeading)
+                    .accessibilityHidden(metadata.isEmpty)
             }
             .contentShape(RoundedRectangle(cornerRadius: 18))
         }
