@@ -26,17 +26,17 @@ struct SettingsView: View {
                 Button {
                     Task { await catalog.loadConfiguration(from: endpoint, restoreRemovedSites: true) }
                 } label: {
-                    HStack {
-                        Spacer(minLength: 0)
+                    Group {
                         if catalog.isLoading {
                             ProgressView()
                         } else {
-                            Label("载入配置", systemImage: "arrow.down.circle")
+                            Text("载入配置")
                         }
-                        Spacer(minLength: 0)
                     }
+                    .frame(maxWidth: .infinity, minHeight: 20, alignment: .center)
                 }
                 .buttonStyle(.borderedProminent)
+                .accessibilityLabel(catalog.isLoading ? "正在载入配置" : "载入配置")
                 .disabled(catalog.isLoading || endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                 Button("恢复演示数据…", role: .destructive) {

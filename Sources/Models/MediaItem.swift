@@ -410,7 +410,15 @@ struct LivePlaybackContext {
         )
     }
 
-    func request(groupID: String, channelID: String, sourceID: String, title: String? = nil, url overrideURL: URL? = nil, isLive: Bool = true) -> PlaybackRequest? {
+    func request(
+        groupID: String,
+        channelID: String,
+        sourceID: String,
+        title: String? = nil,
+        url overrideURL: URL? = nil,
+        isLive: Bool = true,
+        durationMilliseconds: Int = 0
+    ) -> PlaybackRequest? {
         guard let group = groups.first(where: { $0.id == groupID }),
               let channel = group.channels.first(where: { $0.id == channelID }),
               let source = channel.sources.first(where: { $0.id == sourceID }) ?? channel.sources.first,
@@ -442,6 +450,7 @@ struct LivePlaybackContext {
             queue: queue,
             queueIndex: queueIndex,
             isLive: isLive,
+            durationMilliseconds: durationMilliseconds,
             liveContext: selectedContext
         )
     }
@@ -460,6 +469,7 @@ struct PlaybackRequest: Identifiable {
     let queue: [Episode]
     let queueIndex: Int
     let isLive: Bool
+    let durationMilliseconds: Int
     let skipOpeningMilliseconds: Int
     let availableLines: [PlaybackLine]
     let lineID: String?
@@ -478,6 +488,7 @@ struct PlaybackRequest: Identifiable {
         queue: [Episode] = [],
         queueIndex: Int = 0,
         isLive: Bool = false,
+        durationMilliseconds: Int = 0,
         skipOpeningMilliseconds: Int = 0,
         availableLines: [PlaybackLine] = [],
         lineID: String? = nil,
@@ -495,6 +506,7 @@ struct PlaybackRequest: Identifiable {
         self.queue = queue
         self.queueIndex = queueIndex
         self.isLive = isLive
+        self.durationMilliseconds = max(0, durationMilliseconds)
         self.skipOpeningMilliseconds = skipOpeningMilliseconds
         self.availableLines = availableLines
         self.lineID = lineID

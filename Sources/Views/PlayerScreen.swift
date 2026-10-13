@@ -770,7 +770,8 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         if reportedDurationMilliseconds > 0 {
             return reportedDurationMilliseconds
         }
-        return max(0, Int(player.media?.length.intValue ?? 0))
+        let mediaDuration = max(0, Int(player.media?.length.intValue ?? 0))
+        return mediaDuration > 0 ? mediaDuration : request.durationMilliseconds
     }
 
     private static func clockString(milliseconds: Int32) -> String {
@@ -1391,6 +1392,7 @@ struct PlayerScreen: View {
         }
         .padding(14)
         .background(Color.tvboxSurface)
+        .foregroundStyle(Color(uiColor: .label))
     }
 
     private var livePortraitSourceSelector: some View {
@@ -1401,20 +1403,22 @@ struct PlayerScreen: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(liveContext?.currentChannel?.sources ?? []) { source in
+                        let isSelected = source.id == liveContext?.sourceID
                         Button {
                             selectLiveSource(source)
                         } label: {
                             HStack(spacing: 5) {
-                                if source.id == liveContext?.sourceID { Image(systemName: "checkmark") }
+                                if isSelected { Image(systemName: "checkmark") }
                                 Text(source.name).lineLimit(1)
                             }
                             .font(.system(size: 12, weight: .medium))
                             .padding(.horizontal, 11)
                             .padding(.vertical, 8)
-                            .background(source.id == liveContext?.sourceID ? Color.tvboxAccent : Color.tvboxSurface, in: Capsule())
+                            .foregroundStyle(isSelected ? Color.white : Color(uiColor: .label))
+                            .background(isSelected ? Color.tvboxAccent : Color.tvboxSurface, in: Capsule())
                         }
                         .buttonStyle(.plain)
-                        .disabled(source.id == liveContext?.sourceID || isSwitchingEpisode)
+                        .disabled(isSwitchingEpisode)
                     }
                 }
             }
@@ -1436,6 +1440,7 @@ struct PlayerScreen: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(liveGuideDates, id: \.self) { date in
+                        let isSelected = Calendar.current.isDate(date, inSameDayAs: liveGuideDate)
                         Button {
                             liveGuideDate = date
                         } label: {
@@ -1443,7 +1448,8 @@ struct PlayerScreen: View {
                                 .font(.system(size: 12, weight: .semibold))
                                 .padding(.horizontal, 13)
                                 .padding(.vertical, 8)
-                                .background(Calendar.current.isDate(date, inSameDayAs: liveGuideDate) ? Color.tvboxAccent : Color.tvboxSurface, in: Capsule())
+                                .foregroundStyle(isSelected ? Color.white : Color(uiColor: .label))
+                                .background(isSelected ? Color.tvboxAccent : Color.tvboxSurface, in: Capsule())
                         }
                         .buttonStyle(.plain)
                     }
@@ -1486,6 +1492,7 @@ struct PlayerScreen: View {
                                     .foregroundStyle(source.id == liveContext?.sourceID ? Color.tvboxAccent : Color.secondary)
                                 Text(source.name)
                                     .lineLimit(1)
+                                    .foregroundStyle(Color(uiColor: .label))
                                 Spacer()
                                 if source.id == liveContext?.sourceID {
                                     Text("当前")
@@ -1499,7 +1506,7 @@ struct PlayerScreen: View {
                             .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
                         .buttonStyle(.plain)
-                        .disabled(source.id == liveContext?.sourceID || isSwitchingEpisode)
+                        .disabled(isSwitchingEpisode)
                     }
                 }
             }
@@ -1516,7 +1523,8 @@ struct PlayerScreen: View {
                 sourceID: context.sourceID,
                 title: "\(context.currentChannel?.name ?? session.title) · \(program.title)",
                 url: target.url,
-                isLive: target.isLive
+                isLive: target.isLive,
+                durationMilliseconds: target.durationMilliseconds
             ) {
                 session.replace(with: request)
             }
@@ -1530,16 +1538,16 @@ struct PlayerScreen: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(program.title)
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(Color(uiColor: .label))
                         .lineLimit(2)
                     Text("至 \(program.end)")
                         .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color(uiColor: .secondaryLabel))
                 }
                 Spacer(minLength: 4)
                 Text(target?.isLive == true ? "直播中" : (target == nil ? "未提供回看" : "回看"))
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(target == nil ? Color.secondary : Color.tvboxAccent)
+                    .foregroundStyle(target == nil ? Color(uiColor: .secondaryLabel) : Color.tvboxAccent)
                     .lineLimit(1)
             }
             .padding(.vertical, 11)
@@ -1550,33 +1558,25 @@ struct PlayerScreen: View {
     }
 
     private func liveLandscapePanel(_ panel: LivePlayerPanel, size: CGSize) -> some View {
-        HStack(spacing: 0) {
-            if panel == .guide {
-                liveSidePanel(panel, size: size)
-                Spacer(minLength: 0)
-            } else {
-                Spacer(minLength: 0)
-                liveSidePanel(panel, size: size)
-            }
+        ZStack(alignment: panel == .guide ? .leading : .trailing) {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard let panel = landscapeLivePanel else { return }
+                    toggleLivePanel(panel)
+                }
+            liveSidePanel(panel, size: size)
+                .padding(.horizontal, playerPadding(compact: size.width < 700))
         }
-        .padding(.horizontal, playerPadding(compact: size.width < 700))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .transition(.move(edge: panel == .guide ? .leading : .trailing).combined(with: .opacity))
     }
 
     private func liveSidePanel(_ panel: LivePlayerPanel, size: CGSize) -> some View {
         VStack(spacing: 10) {
-            HStack {
-                Text(panel.rawValue)
-                    .font(.headline)
-                Spacer()
-                Button { landscapeLivePanel = nil } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title3)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("关闭\(panel.rawValue)")
-            }
+            Text(panel.rawValue)
+                .font(.headline)
+                .frame(maxWidth: .infinity, alignment: .leading)
             livePanelContent(panel)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
@@ -1584,6 +1584,10 @@ struct PlayerScreen: View {
         .frame(width: min(max(size.width * 0.32, 280), 390), height: size.height * 0.84)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(.white.opacity(0.12), lineWidth: 1))
+        .foregroundStyle(Color(uiColor: .label))
+        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .simultaneousGesture(TapGesture().onEnded { })
+        .accessibilityAction(.escape) { toggleLivePanel(panel) }
         #if os(tvOS)
         .focusSection()
         #endif
@@ -1635,7 +1639,7 @@ struct PlayerScreen: View {
         isLoadingLiveGuide = false
     }
 
-    private func liveProgramTarget(for program: TVBoxEPGProgram) -> (url: URL, isLive: Bool)? {
+    private func liveProgramTarget(for program: TVBoxEPGProgram) -> (url: URL, isLive: Bool, durationMilliseconds: Int)? {
         guard let context = liveContext,
               let channel = context.currentChannel,
               let source = context.currentSource,
@@ -1644,7 +1648,7 @@ struct PlayerScreen: View {
         if now < interval.start { return nil }
         if now < interval.end {
             guard let url = URL(string: source.address), Self.isSupportedStreamURL(url) else { return nil }
-            return (url, true)
+            return (url, true, 0)
         }
         guard let sourceIndex = channel.sources.firstIndex(of: source) else { return nil }
         let template = sourceIndex < channel.catchupSources.count ? channel.catchupSources[sourceIndex] : ""
@@ -1674,11 +1678,13 @@ struct PlayerScreen: View {
         guard !address.isEmpty,
               let url = URL(string: address, relativeTo: URL(string: source.address))?.absoluteURL,
               Self.isSupportedStreamURL(url) else { return nil }
-        return (url, false)
+        let durationMilliseconds = max(0, Int(interval.end.timeIntervalSince(interval.start) * 1_000))
+        return (url, false, durationMilliseconds)
     }
 
     private func selectLiveSource(_ source: TVBoxLiveSource) {
         guard let context = liveContext,
+              source.id != context.sourceID,
               let request = context.request(groupID: context.groupID, channelID: context.channelID, sourceID: source.id) else { return }
         isSwitchingEpisode = true
         session.replace(with: request)

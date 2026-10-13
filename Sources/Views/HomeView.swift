@@ -302,7 +302,6 @@ struct HomeView: View {
                 catalog.selectCategory($0)
             }
         )) {
-            Text("全部").tag("")
             ForEach(catalog.categories) { category in
                 Text(category.name).tag(category.id)
             }
@@ -332,6 +331,7 @@ struct HomeView: View {
                 }
             }
         }
+        .scrollClipDisabled()
     }
 
     private func contentGrid(_ values: [MediaItem], wide: Bool, titleOverride: String? = nil, section: HomeSection) -> some View {
@@ -411,6 +411,7 @@ struct HomeView: View {
         HStack(spacing: 26) {
             MediaArtwork(item: item, wide: true)
                 .frame(width: 410, height: 250)
+                .contentShape(Rectangle())
             VStack(alignment: .leading, spacing: 13) {
                 SectionEyebrow(text: item.category.isEmpty ? "推荐" : item.category)
                 Text(item.title)
@@ -441,6 +442,7 @@ struct HomeView: View {
         .padding(14)
         .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 24).strokeBorder(.white.opacity(0.08), lineWidth: 1))
+        .contentShape(Rectangle())
     }
 
     @ViewBuilder
@@ -633,6 +635,7 @@ private struct LiveGroupPasswordSheet: View {
 private struct EPGPlaybackTarget: Equatable {
     let url: URL
     let isLive: Bool
+    let durationMilliseconds: Int
 }
 
 private struct LiveEPGSheet: View {
@@ -767,7 +770,7 @@ private struct LiveEPGSheet: View {
         if now < interval.end {
             guard let liveURL = URL(string: source.address),
                   ["http", "https", "rtsp", "rtmp"].contains(liveURL.scheme?.lowercased() ?? "") else { return nil }
-            return EPGPlaybackTarget(url: liveURL, isLive: true)
+            return EPGPlaybackTarget(url: liveURL, isLive: true, durationMilliseconds: 0)
         }
 
         guard let sourceIndex = channel.sources.firstIndex(of: source) else { return nil }
@@ -807,7 +810,8 @@ private struct LiveEPGSheet: View {
         guard !address.isEmpty else { return nil }
         let candidate = URL(string: address, relativeTo: URL(string: source.address))?.absoluteURL
         guard let candidate, ["http", "https", "rtsp", "rtmp"].contains(candidate.scheme?.lowercased() ?? "") else { return nil }
-        return EPGPlaybackTarget(url: candidate, isLive: false)
+        let durationMilliseconds = max(0, Int(interval.end.timeIntervalSince(interval.start) * 1_000))
+        return EPGPlaybackTarget(url: candidate, isLive: false, durationMilliseconds: durationMilliseconds)
     }
 
     private func play(_ program: TVBoxEPGProgram) {
@@ -817,7 +821,8 @@ private struct LiveEPGSheet: View {
             title: "\(channel.name) · \(program.title)",
             url: target.url,
             headers: source.headers.merging(headersForAddress(source.address)) { _, rule in rule },
-            isLive: target.isLive
+            isLive: target.isLive,
+            durationMilliseconds: target.durationMilliseconds
         ))
         dismiss()
     }

@@ -328,7 +328,7 @@ final class CatalogStore: ObservableObject {
     }
 
     func selectCategory(_ categoryID: String) {
-        selectedCategoryID = categoryID
+        selectedCategoryID = categoryID.isEmpty ? (categories.first?.id ?? "") : categoryID
         selectedFilters = [:]
         searchQuery = ""
         isSearchingAllSites = false
@@ -539,18 +539,38 @@ final class CatalogStore: ObservableObject {
         do {
             let response = try await service.loadCategories(for: site)
             guard !Task.isCancelled, generation == requestGeneration else { return }
-            let all = TVBoxCategory(id: "", name: "全部", flag: "", filters: [])
-            categories = [all] + response.categories
-            selectedCategoryID = ""
+            let isAllCategory: (TVBoxCategory) -> Bool = {
+                $0.name.trimmingCharacters(in: .whitespacesAndNewlines) == "全部"
+            }
+            let remoteAllIndex = response.categories.firstIndex(where: isAllCategory)
+            let all: TVBoxCategory
+            if let remoteAllIndex {
+                let remoteAll = response.categories[remoteAllIndex]
+                all = TVBoxCategory(
+                    id: remoteAll.id,
+                    name: "最近更新",
+                    flag: remoteAll.flag,
+                    filters: remoteAll.filters
+                )
+            } else {
+                all = TVBoxCategory(id: "", name: "最近更新", flag: "", filters: [])
+            }
+            var siteCategories = response.categories
+            siteCategories.removeAll(where: isAllCategory)
+            categories = [all] + siteCategories
+            selectedCategoryID = all.id
             currentPage = 1
             pageCount = 1
             if !response.featuredItems.isEmpty {
                 items = scoped(response.featuredItems)
                 canLoadMore = false
-            } else if !response.categories.isEmpty {
-                let first = response.categories[0]
-                selectedCategoryID = first.id
-                let page = try await service.loadPage(for: site, category: first, page: 1)
+            } else if let initialCategory = remoteAllIndex.map({ response.categories[$0] }) ?? response.categories.first {
+                selectedCategoryID = initialCategory.id
+                let page = try await service.loadPage(
+                    for: site,
+                    category: initialCategory.id.isEmpty ? nil : initialCategory,
+                    page: 1
+                )
                 guard !Task.isCancelled, generation == requestGeneration else { return }
                 items = scoped(page.items)
                 currentPage = page.page
