@@ -82,9 +82,10 @@ extension VLCVideoDrawable: VLCPictureInPictureDrawable {
         session ?? InactivePictureInPictureMediaController.shared
     }
 
-    func pictureInPictureReady() -> (VLCPictureInPictureWindowControlling) -> Void {
+    func pictureInPictureReady() -> ((VLCPictureInPictureWindowControlling?) -> Void)? {
         let drawableID = id
         return { [weak session] controller in
+            guard let controller else { return }
             Task { @MainActor [weak session] in
                 session?.pictureInPictureReady(controller, drawableID: drawableID)
             }
