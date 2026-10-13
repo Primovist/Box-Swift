@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 private enum HomeSection: String, CaseIterable, Identifiable {
     case video = "影视"
@@ -13,6 +16,54 @@ private enum HomeSection: String, CaseIterable, Identifiable {
 private struct HomeScrollMetrics: Equatable {
     let offsetFromTop: CGFloat
     let maximumOffset: CGFloat
+}
+
+private struct ScrollBounceConfigurator: UIViewRepresentable {
+    let isDisabled: Bool
+
+    func makeUIView(context: Context) -> ScrollBounceProbeView {
+        ScrollBounceProbeView(isDisabled: isDisabled)
+    }
+
+    func updateUIView(_ uiView: ScrollBounceProbeView, context: Context) {
+        uiView.isDisabled = isDisabled
+        uiView.updateScrollView()
+    }
+
+    private final class ScrollBounceProbeView: UIView {
+        var isDisabled: Bool
+
+        init(isDisabled: Bool) {
+            self.isDisabled = isDisabled
+            super.init(frame: .zero)
+            isUserInteractionEnabled = false
+        }
+
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override func didMoveToSuperview() {
+            super.didMoveToSuperview()
+            updateScrollView()
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            updateScrollView()
+        }
+
+        func updateScrollView() {
+            var ancestor = superview
+            while let view = ancestor {
+                if let scrollView = view as? UIScrollView {
+                    scrollView.bounces = !isDisabled
+                    return
+                }
+                ancestor = view.superview
+            }
+        }
+    }
 }
 #endif
 
@@ -65,80 +116,7 @@ struct HomeView: View {
                                 SettingsView()
                                     .transition(.opacity)
                             } else {
-                                ScrollView {
-                                    VStack(alignment: .leading, spacing: wide ? 28 : 20) {
-                                        #if os(iOS)
-                                        header(wide: wide)
-                                        #endif
-
-                                        if section == .search {
-                                            searchField
-                                            searchHistorySection
-                                            if catalog.isSearching {
-                                                if !currentItems.isEmpty {
-                                                    contentGrid(currentItems, wide: wide, titleOverride: "搜索结果")
-                                                } else if !catalog.isLoading {
-                                                    emptyState
-                                                }
-                                            }
-                                            savedItemsSection("观看历史", items: catalog.historyItems.map(\.item), wide: wide, history: true)
-                                            savedItemsSection("我的收藏", items: catalog.favoriteItems, wide: wide)
-                                        }
-
-                                        if section == .video {
-                                            if !catalog.categories.isEmpty { categoryPicker(wide: wide) }
-                                            if catalog.selectedSite?.filterable == true,
-                                               let category = catalog.selectedCategory,
-                                               !category.filters.isEmpty {
-                                                filterPicker(category: category)
-                                            }
-                                            if wide, catalog.selectedCategoryID.isEmpty, searchText.isEmpty,
-                                               let featured = currentItems.first {
-                                                NavigationLink(value: featured) { featuredCard(featured, wide: wide) }
-                                                    .buttonStyle(FocusAwareButtonStyle())
-                                            }
-                                        }
-
-                                        if section == .live {
-                                            liveContent(wide: wide)
-                                        } else if section == .video && !currentItems.isEmpty {
-                                            contentGrid(currentItems, wide: wide)
-                                        } else if section == .video && !catalog.isLoading {
-                                            emptyState
-                                        }
-
-                                        if catalog.isLoading {
-                                            HStack { ProgressView().tint(.white); Text("正在载入…").foregroundStyle(Color.tvboxMuted) }
-                                                .frame(maxWidth: .infinity)
-                                                .padding(.vertical, 20)
-                                        }
-                                        if let message = catalog.loadMessage {
-                                            Text(message)
-                                                .font(.system(size: 12, weight: .medium))
-                                                .foregroundStyle(Color.tvboxMuted)
-                                                .fixedSize(horizontal: false, vertical: true)
-                                        }
-                                        footer
-                                    }
-                                    .frame(maxWidth: 1500)
-                                    .padding(.horizontal, wide ? 72 : 20)
-                                    .padding(.top, wide ? 28 : 18)
-                                    .padding(.bottom, 48)
-                                    .frame(maxWidth: .infinity)
-                                }
-                                .id(section)
-                                .scrollBounceBehavior(section == .live ? .never : .basedOnSize)
-                                .transition(.opacity)
-                                #if os(iOS)
-                                .onScrollGeometryChange(for: HomeScrollMetrics.self) { geometry in
-                                    HomeScrollMetrics(
-                                        offsetFromTop: max(0, geometry.contentOffset.y + geometry.contentInsets.top),
-                                        maximumOffset: max(0, geometry.contentSize.height - geometry.containerSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom)
-                                    )
-                                } action: { oldMetrics, newMetrics in
-                                    updateSectionNavigation(oldMetrics: oldMetrics, newMetrics: newMetrics)
-                                }
-                                #endif
+                                scrollableSectionContent(wide: wide)
                             }
                         }
                         .animation(.easeInOut(duration: 0.22), value: section)
@@ -227,6 +205,117 @@ struct HomeView: View {
             downwardScrollDistance = 0
             upwardScrollDistance = 0
             #endif
+        }
+    }
+
+    private func scrollableSectionContent(wide: Bool) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: wide ? 28 : 20) {
+                #if os(iOS)
+                header(wide: wide)
+                #endif
+                searchSectionContent(wide: wide)
+                videoSectionContent(wide: wide)
+                primarySectionContent(wide: wide)
+                statusSectionContent
+                footer
+            }
+            .frame(maxWidth: 1500)
+            .padding(.horizontal, wide ? 72 : 20)
+            .padding(.top, wide ? 28 : 18)
+            .padding(.bottom, 48)
+            .frame(maxWidth: .infinity)
+            #if os(iOS)
+            .background {
+                ScrollBounceConfigurator(isDisabled: section == .live)
+            }
+            #endif
+        }
+        .id(section)
+        .scrollBounceBehavior(.basedOnSize)
+        .transition(.opacity)
+        #if os(iOS)
+        .onScrollGeometryChange(for: HomeScrollMetrics.self) { geometry in
+            HomeScrollMetrics(
+                offsetFromTop: max(0, geometry.contentOffset.y + geometry.contentInsets.top),
+                maximumOffset: max(0, geometry.contentSize.height - geometry.containerSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom)
+            )
+        } action: { oldMetrics, newMetrics in
+            updateSectionNavigation(oldMetrics: oldMetrics, newMetrics: newMetrics)
+        }
+        #endif
+    }
+
+    @ViewBuilder
+    private func searchSectionContent(wide: Bool) -> some View {
+        if section == .search {
+            searchField
+            searchHistorySection
+            if catalog.isSearching {
+                searchResultsContent(wide: wide)
+            }
+            savedItemsSection("观看历史", items: catalog.historyItems.map(\.item), wide: wide, history: true)
+            savedItemsSection("我的收藏", items: catalog.favoriteItems, wide: wide)
+        }
+    }
+
+    @ViewBuilder
+    private func searchResultsContent(wide: Bool) -> some View {
+        if !currentItems.isEmpty {
+            contentGrid(currentItems, wide: wide, titleOverride: "搜索结果")
+        } else if !catalog.isLoading {
+            emptyState
+        }
+    }
+
+    @ViewBuilder
+    private func videoSectionContent(wide: Bool) -> some View {
+        if section == .video {
+            if !catalog.categories.isEmpty {
+                categoryPicker(wide: wide)
+            }
+            if let category = catalog.selectedCategory,
+               catalog.selectedSite?.filterable == true,
+               !category.filters.isEmpty {
+                filterPicker(category: category)
+            }
+            if wide, catalog.selectedCategoryID.isEmpty, searchText.isEmpty,
+               let featured = currentItems.first {
+                NavigationLink(value: featured) { featuredCard(featured, wide: wide) }
+                    .buttonStyle(FocusAwareButtonStyle())
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func primarySectionContent(wide: Bool) -> some View {
+        switch section {
+        case .live:
+            liveContent(wide: wide)
+        case .video where !currentItems.isEmpty:
+            contentGrid(currentItems, wide: wide)
+        case .video where !catalog.isLoading:
+            emptyState
+        default:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private var statusSectionContent: some View {
+        if catalog.isLoading {
+            HStack {
+                ProgressView().tint(.white)
+                Text("正在载入…").foregroundStyle(Color.tvboxMuted)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 20)
+        }
+        if let message = catalog.loadMessage {
+            Text(message)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.tvboxMuted)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
