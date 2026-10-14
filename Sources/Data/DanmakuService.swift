@@ -738,7 +738,7 @@ enum DanmakuLayout {
         #else
         let minimumSize = 14.0
         #endif
-        min(44, max(minimumSize, comment.fontSize * 0.78 * min(1.6, max(0.72, width / 900)) * scale))
+        return min(44, max(minimumSize, comment.fontSize * 0.78 * min(1.6, max(0.72, width / 900)) * scale))
     }
 
     static func estimatedTextWidth(_ comment: DanmakuComment, fontSize: Double) -> Double {
