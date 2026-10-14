@@ -2257,9 +2257,9 @@ struct PlayerScreen: View {
                                 Text(liveDateTitle(date))
                                     .font(.system(size: TVBoxTypography.readable(12, minimum: 23), weight: .semibold))
                                     .fixedSize()
-                                    .frame(minWidth: TVBoxTypography.readable(120, minimum: 150), minHeight: TVBoxTypography.readable(42, minimum: 56))
-                                    .padding(.horizontal, TVBoxTypography.readable(13, minimum: 20))
-                                    .padding(.vertical, TVBoxTypography.readable(8, minimum: 14))
+                                    .frame(minWidth: TVBoxTypography.readable(88, minimum: 150), minHeight: TVBoxTypography.readable(34, minimum: 56))
+                                    .padding(.horizontal, TVBoxTypography.readable(8, minimum: 20))
+                                    .padding(.vertical, TVBoxTypography.readable(4, minimum: 14))
                                     .foregroundStyle(isSelected ? Color.white : Color(uiColor: .label))
                                     .background(isSelected ? Color.tvboxSelection : Color.tvboxSurface, in: Capsule())
                             }
@@ -2268,7 +2268,7 @@ struct PlayerScreen: View {
                             .id(date)
                         }
                     }
-                    .padding(.vertical, TVBoxTypography.readable(10, minimum: 22))
+                    .padding(.vertical, TVBoxTypography.readable(4, minimum: 22))
                 }
                 .onAppear {
                     focusLiveGuideDateForPlayback()
@@ -2385,32 +2385,35 @@ struct PlayerScreen: View {
             }
         } label: {
             HStack(spacing: 12) {
-                Text(program.start)
-                    .font(.system(size: TVBoxTypography.readable(13, minimum: 23), weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(Color.tvboxAccent)
-                    .frame(width: TVBoxTypography.readable(48, minimum: 88), alignment: .leading)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(program.start)
+                        .font(.system(size: TVBoxTypography.readable(13, minimum: 23), weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(Color.blue)
+                    Text(program.end)
+                        .font(.system(size: TVBoxTypography.readable(11, minimum: 20), weight: .medium, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(Color.white.opacity(0.82))
+                }
+                .frame(width: TVBoxTypography.readable(55, minimum: 88), alignment: .leading)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(program.title)
                         .font(.system(size: TVBoxTypography.readable(14), weight: .semibold))
                         .foregroundStyle(Color(uiColor: .label))
                         .lineLimit(2)
-                    Text("至 \(program.end)")
-                        .font(.system(size: TVBoxTypography.readable(11, minimum: 23)))
-                        .foregroundStyle(Color(uiColor: .secondaryLabel))
                 }
                 Spacer(minLength: 4)
                 Text(status)
                     .font(.system(size: TVBoxTypography.readable(11, minimum: 23), weight: .medium))
                     .foregroundStyle(target == nil ? Color(uiColor: .secondaryLabel) : statusColor)
                     .lineLimit(1)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, TVBoxTypography.readable(7, minimum: 10))
+                    .padding(.vertical, TVBoxTypography.readable(4, minimum: 8))
                     .background((target == nil ? Color.white.opacity(0.08) : statusColor.opacity(0.16)), in: Capsule())
             }
-            .padding(.vertical, TVBoxTypography.readable(11, minimum: 18))
-            .padding(.horizontal, TVBoxTypography.readable(10, minimum: 18))
-            .frame(minHeight: TVBoxTypography.readable(68, minimum: 104))
+            .padding(.vertical, TVBoxTypography.readable(6, minimum: 18))
+            .padding(.horizontal, TVBoxTypography.readable(8, minimum: 18))
+            .frame(minHeight: TVBoxTypography.readable(52, minimum: 104))
             .background(isPlaying ? Color.tvboxSelection.opacity(0.42) : Color.tvboxSurface.opacity(0.92),
                         in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
