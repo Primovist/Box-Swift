@@ -23,85 +23,91 @@ struct SettingsView: View {
 
     private var liveChannelCountText: String {
         if catalog.isLoadingLive { return "载入中…" }
-        guard catalog.hasLoadedLive || catalog.configuration?.liveURLs.isEmpty == true else {
-            return "未载入"
+        if catalog.hasLoadedLive {
+            return "\(catalog.liveGroups.reduce(0) { $0 + $1.channels.count })"
         }
-        return "\(catalog.liveGroups.reduce(0) { $0 + $1.channels.count })"
+        return "未载入"
     }
 
     var body: some View {
         Form {
             Section {
-                VStack(spacing: 10) {
-                    urlField("https://example.com/tvbox.json", text: $endpoint)
-                    Divider()
-                    Button {
-                        isEndpointFocused = false
-                        Task { await catalog.loadConfiguration(from: endpoint, restoreRemovedSites: true) }
-                    } label: {
-                        Group {
-                            if catalog.isLoading {
-                                ProgressView()
-                            } else {
-                                Text("载入配置")
-                            }
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 20, alignment: .center)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityLabel(catalog.isLoading ? "正在载入配置" : "载入配置")
-                    .disabled(catalog.isLoading || endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                    if !catalog.savedSourceURLs.isEmpty {
-                        Divider()
-                        Menu {
-                            ForEach(catalog.savedSourceURLs, id: \.self) { address in
-                                Button {
-                                    isEndpointFocused = false
-                                    endpoint = address
-                                    Task { await catalog.loadConfiguration(from: address) }
-                                } label: {
-                                    Text(address)
-                                        .fontWeight(address == catalog.sourceURL ? .semibold : .regular)
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 8) {
-                                Text("已登记服务器")
-                                Spacer(minLength: 12)
-                                Text("\(catalog.savedSourceURLs.count)")
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-
-                    Divider()
-                    Button("删除当前登记服务器…", role: .destructive) {
-                        isConfirmingServerRemoval = true
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .disabled(catalog.sourceURL.isEmpty)
-                }
+                urlField("https://example.com/tvbox.json", text: $endpoint)
                 #if os(iOS)
                 .listRowSeparator(.hidden)
                 #endif
+
+                Button {
+                    isEndpointFocused = false
+                    Task { await catalog.loadConfiguration(from: endpoint, restoreRemovedSites: true) }
+                } label: {
+                    Group {
+                        if catalog.isLoading {
+                            ProgressView()
+                        } else {
+                            Text("载入配置")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 20, alignment: .center)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityLabel(catalog.isLoading ? "正在载入配置" : "载入配置")
+                .disabled(catalog.isLoading || endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                #if os(iOS)
+                .listRowSeparator(.hidden)
+                #endif
+
+                if !catalog.savedSourceURLs.isEmpty {
+                    Menu {
+                        ForEach(catalog.savedSourceURLs, id: \.self) { address in
+                            Button {
+                                isEndpointFocused = false
+                                endpoint = address
+                                Task { await catalog.loadConfiguration(from: address) }
+                            } label: {
+                                Text(address)
+                                    .fontWeight(address == catalog.sourceURL ? .semibold : .regular)
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text("已登记服务器")
+                            Spacer(minLength: 12)
+                            Text("\(catalog.savedSourceURLs.count)")
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                Button("删除当前登记服务器…", role: .destructive) {
+                    isConfirmingServerRemoval = true
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .disabled(catalog.sourceURL.isEmpty)
             } header: {
                 Text("片源配置")
             } footer: {
                 Text("支持顶层 sites 或 video.sites；站点 type 0、1、4。支持静态网页媒体地址提取和 JSON 解析器。动态网页嗅探、Spider（type 3）不执行。")
             }
 
-            if let configuration = catalog.configuration, !catalog.availableSites.isEmpty {
+            if let configuration = catalog.configuration {
                 Section("当前视频源") {
-                    Picker("站点", selection: Binding(
-                        get: { catalog.selectedSiteKey },
-                        set: { catalog.selectSite($0) }
-                    )) {
-                        ForEach(catalog.availableSites) { site in
-                            Text(site.name).tag(site.key)
+                    if !catalog.availableSites.isEmpty {
+                        Picker("站点", selection: Binding(
+                            get: { catalog.selectedSite?.key ?? "" },
+                            set: { catalog.selectSite($0) }
+                        )) {
+                            ForEach(catalog.availableSites) { site in
+                                Text(site.name).tag(site.key)
+                            }
                         }
+                    } else {
+                        Text(configuration.sites.isEmpty
+                             ? "此配置没有可用的视频站点。"
+                             : "所有视频站点均已移除；重新载入配置可恢复。")
+                            .foregroundStyle(.secondary)
                     }
 
                     statisticRow("可用站点", value: "\(catalog.availableSites.count)")

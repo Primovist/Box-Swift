@@ -48,22 +48,26 @@ struct DanmakuOverlay: View {
     private func visibleLaneCount(for size: CGSize) -> Int {
         let portrait = size.width < size.height
         let contentHeight = Double(size.height) * (portrait ? 0.60 : 0.76)
-        let laneHeight = max(23, 25 * sizeScale + 7)
+        let laneHeight = danmakuLaneHeight
         return max(1, min(maxLines, Int(contentHeight * 0.52 / laneHeight)))
     }
 
     private func draw(context: inout GraphicsContext, size: CGSize, safeAreaInsets: EdgeInsets, time: Double) {
         let contentHeight = Double(size.height) * (size.width < size.height ? 0.60 : 0.76)
-        let laneHeight = max(23, 25 * sizeScale + 7)
+        let laneHeight = danmakuLaneHeight
         let availableLanes = visibleLaneCount(for: size)
         let scrollDuration = DanmakuLayout.scrollDuration(speed: speed)
         let playbackSeconds = time / 1_000
         let oldestPossibleStart = playbackSeconds - 61
         let firstIndex = lowerBound(in: placements, time: oldestPossibleStart)
         let endIndex = upperBound(in: placements, time: playbackSeconds)
+        #if os(tvOS)
+        let topInset = max(60, Double(safeAreaInsets.top))
+        #else
         let topInset = size.width < size.height
             ? max(3, Double(safeAreaInsets.top))
             : 10.0
+        #endif
 
         guard firstIndex < endIndex else { return }
         for placement in placements[firstIndex..<endIndex] {
@@ -135,6 +139,16 @@ struct DanmakuOverlay: View {
             layer.opacity = min(1, max(0, commentOpacity))
             layer.draw(resolved, at: point, anchor: .center)
         }
+    }
+
+    private var danmakuLaneHeight: Double {
+        #if os(tvOS)
+        // The renderer caps comments at 44 pt; reserve 1.4× that height so
+        // placement and drawing use the same lane count from the first frame.
+        44 * 1.4
+        #else
+        max(23, 25 * sizeScale + 7)
+        #endif
     }
 
     private func lowerBound(in values: [DanmakuPlacement], time: Double) -> Int {

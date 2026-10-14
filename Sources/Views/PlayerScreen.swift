@@ -1132,9 +1132,10 @@ struct PlayerScreen: View {
                                     Spacer(minLength: 22)
                                     controlPanel(compact: geometry.size.width < 600)
                                 }
-                                .padding(.horizontal, playerPadding(compact: geometry.size.width < 600))
-                                .padding(.top, playerPadding(compact: geometry.size.width < 600))
-                                .padding(.bottom, playerPadding(compact: geometry.size.width < 600))
+                                .padding(.leading, max(playerPadding(compact: geometry.size.width < 600), geometry.safeAreaInsets.leading))
+                                .padding(.trailing, max(playerPadding(compact: geometry.size.width < 600), geometry.safeAreaInsets.trailing))
+                                .padding(.top, max(playerPadding(compact: geometry.size.width < 600), geometry.safeAreaInsets.top))
+                                .padding(.bottom, max(playerPadding(compact: geometry.size.width < 600), geometry.safeAreaInsets.bottom))
                                 #endif
                             }
                             .transition(session.request.liveContext != nil && !isPortraitLayout ? .identity : .opacity)
@@ -1170,9 +1171,7 @@ struct PlayerScreen: View {
                                     .padding(.top, 8)
                             }
                             GeometryReader { detailsArea in
-                                ScrollView {
-                                    vodPortraitDetails(item, minimumHeight: detailsArea.size.height)
-                                }
+                                vodPortraitDetails(item, minimumHeight: detailsArea.size.height)
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                         } else {
@@ -1642,7 +1641,7 @@ struct PlayerScreen: View {
         guard landscapeLivePanel == nil else { return }
         guard session.isPlaying else { return }
         controlsHideTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 3_500_000_000)
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
             guard !Task.isCancelled, session.isPlaying, !isScrubbing, touchGesture == nil else { return }
             withAnimation(.easeInOut(duration: 0.25)) { areControlsVisible = false }
             #if os(tvOS)
@@ -1673,15 +1672,15 @@ struct PlayerScreen: View {
         HStack(spacing: 14) {
             Button { closePlayer() } label: {
                 Label("返回", systemImage: "chevron.left")
-                    .font(.system(size: 14, weight: .semibold))
-                    .padding(.horizontal, 15)
-                    .padding(.vertical, 11)
+                    .font(.system(size: TVBoxTypography.readable(14), weight: .semibold))
+                    .padding(.horizontal, TVBoxTypography.readable(15, minimum: 24))
+                    .padding(.vertical, TVBoxTypography.readable(11, minimum: 18))
             }
-            .buttonStyle(PlayerControlButtonStyle())
+            .playerControlButtonStyle()
             .accessibilityHint("关闭播放器并返回详情")
             Spacer(minLength: 10)
             Text(session.title)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: TVBoxTypography.readable(15)))
                 .lineLimit(1)
                 .padding(.horizontal, 15)
                 .padding(.vertical, 11)
@@ -1691,18 +1690,18 @@ struct PlayerScreen: View {
                 Button { toggleLivePanel(.guide) } label: {
                     Label("节目单", systemImage: "list.bullet.rectangle")
                 }
-                .buttonStyle(PlayerControlButtonStyle())
+                .playerControlButtonStyle()
                 .accessibilityLabel("显示节目单")
                 Button { toggleLivePanel(.sources) } label: {
                     Label("线路", systemImage: "antenna.radiowaves.left.and.right")
                 }
-                .buttonStyle(PlayerControlButtonStyle())
+                .playerControlButtonStyle()
                 .accessibilityLabel("显示可切换线路")
             } else if session.request.item != nil {
                 Button { toggleLivePanel(.playlist) } label: {
                     Label("片源/选集", systemImage: "list.bullet.rectangle")
                 }
-                .buttonStyle(PlayerControlButtonStyle())
+                .playerControlButtonStyle()
                 .accessibilityLabel("显示片源和选集")
             }
 #endif
@@ -1710,73 +1709,87 @@ struct PlayerScreen: View {
     }
 
     private func vodPortraitDetails(_ item: MediaItem, minimumHeight: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 4) {
+        let compact = minimumHeight < 360
+        return VStack(alignment: .leading, spacing: compact ? 8 : 14) {
+            VStack(alignment: .leading, spacing: compact ? 4 : 10) {
+                HStack(alignment: .firstTextBaseline) {
                     Text(item.title)
                         .font(.system(size: 19, weight: .bold, design: .rounded))
                         .foregroundStyle(Color.primary)
-                        .lineLimit(1)
-                    Text(session.title)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color.tvboxMuted)
-                        .lineLimit(1)
+                        .lineLimit(compact ? 1 : 2)
+                    Spacer(minLength: 8)
+                    if !compact, !item.remarks.isEmpty {
+                        Text(item.remarks)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Color.tvboxMuted)
+                            .lineLimit(1)
+                    }
                 }
-                Spacer(minLength: 8)
-                if !item.remarks.isEmpty {
-                    Text(item.remarks)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Color.tvboxMuted)
-                        .lineLimit(1)
+                if !compact, !item.summary.isEmpty {
+                    Text(item.summary)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.primary.opacity(0.68))
+                        .lineLimit(2)
+                }
+                if !compact {
+                    let metadata = [item.year, item.area, item.language, item.actor.isEmpty ? "" : "主演：\(item.actor)"]
+                        .filter { !$0.isEmpty }
+                    if !metadata.isEmpty {
+                        Text(metadata.joined(separator: " · "))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Color.tvboxMuted)
+                            .lineLimit(2)
+                    }
                 }
             }
-            if !item.summary.isEmpty {
-                Text(item.summary)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Color.primary.opacity(0.68))
-                    .lineLimit(2)
-            }
-            let metadata = [item.year, item.area, item.language, item.actor.isEmpty ? "" : "主演：\(item.actor)"]
-                .filter { !$0.isEmpty }
-            if !metadata.isEmpty {
-                Text(metadata.joined(separator: " · "))
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Color.tvboxMuted)
-                    .lineLimit(2)
-            }
-            vodPlaylistContent(scrollEpisodes: false)
+            Rectangle()
+                .fill(Color.primary.opacity(0.10))
+                .frame(height: 1)
+            vodPlaylistContent(scrollEpisodes: true, compact: compact)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .padding(.horizontal, 14)
-        .padding(.top, 14)
-        .padding(.bottom, 14)
-        .frame(maxWidth: .infinity, minHeight: minimumHeight, alignment: .topLeading)
+        .padding(.top, compact ? 8 : 14)
+        .padding(.bottom, compact ? 8 : 14)
+        .frame(maxWidth: .infinity, minHeight: minimumHeight, maxHeight: .infinity, alignment: .topLeading)
         .background(Color.tvboxSurface)
         .foregroundStyle(Color(uiColor: .label))
     }
 
-    private func vodPlaylistContent(scrollEpisodes: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 11) {
+    private func vodPlaylistContent(scrollEpisodes: Bool, compact: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: compact ? 8 : 14) {
             if let item = session.request.item, item.lines.count > 1 {
-                Text("片源")
-                    .font(.subheadline.weight(.semibold))
+                if !compact {
+                    Text("片源")
+                        .font(vodSectionTitleFont)
+                        .padding(.horizontal, vodFocusHorizontalInset)
+                }
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: vodChoiceSpacing) {
                         ForEach(item.lines) { line in
                             Button {
                                 switchPlaybackLine(line)
                             } label: {
                                 HStack(spacing: 6) {
-                                    if line.id == session.request.lineID {
-                                        Image(systemName: "checkmark")
-                                    }
+                                    Image(systemName: line.id == session.request.lineID ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(vodChoiceIndicatorColor(isSelected: line.id == session.request.lineID))
+                                        .accessibilityHidden(true)
                                     Text(line.flag)
+                                        .lineLimit(1)
+                                        .foregroundStyle(vodChoiceForeground(isSelected: line.id == session.request.lineID))
                                 }
                                 .font(vodChoiceFont)
-                                .foregroundStyle(line.id == session.request.lineID ? .white : Color.primary)
-                                .padding(.horizontal, 12)
+                                .padding(.horizontal, vodChoiceHorizontalPadding)
                                 .frame(minHeight: vodChoiceMinHeight)
-                                    .background(line.id == session.request.lineID ? Color.tvboxAccent : Color.tvboxSurface,
-                                                in: Capsule())
+                                .background(vodChoiceBackground(isSelected: line.id == session.request.lineID),
+                                            in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                        .strokeBorder(
+                                            line.id == session.request.lineID ? Color.tvboxAccent.opacity(0.65) : .clear,
+                                            lineWidth: 2
+                                        )
+                                }
                             }
                             #if os(tvOS)
                             .buttonStyle(.card)
@@ -1791,34 +1804,76 @@ struct PlayerScreen: View {
                             .disabled(isSwitchingEpisode)
                         }
                     }
+                    .padding(.horizontal, vodFocusHorizontalInset)
+                    .padding(.vertical, vodFocusVerticalInset)
                 }
+                #if os(tvOS)
+                .focusSection()
+                #endif
             }
-            Text("选集")
-                .font(.subheadline.weight(.semibold))
+            HStack(alignment: .firstTextBaseline) {
+                Text("选集")
+                    .font(vodSectionTitleFont)
+                Spacer(minLength: 8)
+                Text("\(session.request.queue.count) 集")
+                    .font(vodCountFont)
+                    .foregroundStyle(Color(uiColor: .secondaryLabel))
+            }
+            .padding(.horizontal, vodFocusHorizontalInset)
             if scrollEpisodes {
                 ScrollViewReader { proxy in
                     ScrollView(.vertical, showsIndicators: false) {
-                        LazyVStack(alignment: .leading, spacing: 8) {
+                        LazyVStack(alignment: .leading, spacing: vodChoiceSpacing) {
                             vodEpisodeButtons
                         }
+                        .padding(.horizontal, vodFocusHorizontalInset)
+                        .padding(.vertical, vodFocusVerticalInset)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    #if os(iOS)
+                    .scrollBounceBehavior(.basedOnSize)
+                    #endif
+                    #if os(tvOS)
+                    .focusSection()
+                    #endif
                     .task {
                         #if os(tvOS)
-                        if session.request.queue.indices.contains(session.request.queueIndex) {
+                        if landscapeLivePanel == .playlist,
+                           session.request.queue.indices.contains(session.request.queueIndex) {
+                            let focusKey = vodFocusRestoreKey
                             let episode = session.request.queue[session.request.queueIndex]
                             await Task.yield()
+                            guard landscapeLivePanel == .playlist, focusKey == vodFocusRestoreKey else { return }
                             proxy.scrollTo(episode.id, anchor: .center)
                             await Task.yield()
+                            guard landscapeLivePanel == .playlist, focusKey == vodFocusRestoreKey else { return }
                             livePanelFocusTarget = "vod:\(episode.id)"
                         }
                         #endif
                     }
+                    #if os(tvOS)
+                    .onChange(of: vodFocusRestoreKey) { _, _ in
+                        guard landscapeLivePanel == .playlist,
+                              session.request.queue.indices.contains(session.request.queueIndex) else { return }
+                        let focusKey = vodFocusRestoreKey
+                        let episode = session.request.queue[session.request.queueIndex]
+                        Task { @MainActor in
+                            await Task.yield()
+                            guard landscapeLivePanel == .playlist, focusKey == vodFocusRestoreKey else { return }
+                            proxy.scrollTo(episode.id, anchor: .center)
+                            await Task.yield()
+                            guard landscapeLivePanel == .playlist, focusKey == vodFocusRestoreKey else { return }
+                            livePanelFocusTarget = "vod:\(episode.id)"
+                        }
+                    }
+                    #endif
                 }
             } else {
-                LazyVStack(alignment: .leading, spacing: 8) {
+                LazyVStack(alignment: .leading, spacing: vodChoiceSpacing) {
                     vodEpisodeButtons
                 }
+                .padding(.horizontal, vodFocusHorizontalInset)
+                .padding(.vertical, vodFocusVerticalInset)
             }
             if isSwitchingEpisode {
                 ProgressView("正在切换剧集…")
@@ -1834,20 +1889,29 @@ struct PlayerScreen: View {
             Button {
                 selectVodEpisode(episode, at: index)
             } label: {
-                HStack(spacing: 6) {
-                    if index == session.request.queueIndex {
-                        Image(systemName: "checkmark")
-                    }
+                HStack(spacing: vodChoiceSpacing) {
+                    Image(systemName: index == session.request.queueIndex ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(vodChoiceIndicatorColor(isSelected: index == session.request.queueIndex))
+                        .accessibilityHidden(true)
                     Text(episode.title)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(2)
+                        .foregroundStyle(vodChoiceForeground(isSelected: index == session.request.queueIndex))
+                    Spacer(minLength: 8)
                 }
                 .font(vodChoiceFont)
-                .foregroundStyle(index == session.request.queueIndex ? .white : Color.primary)
-                .padding(.horizontal, 12)
+                .padding(.horizontal, vodChoiceHorizontalPadding)
                 .frame(maxWidth: .infinity, minHeight: vodChoiceMinHeight, alignment: .leading)
-                .background(index == session.request.queueIndex ? Color.tvboxAccent : Color.tvboxSurface,
-                            in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .background(vodChoiceBackground(isSelected: index == session.request.queueIndex),
+                            in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(
+                            index == session.request.queueIndex ? Color.tvboxAccent.opacity(0.65) : .clear,
+                            lineWidth: 2
+                        )
+                }
             }
             #if os(tvOS)
             .buttonStyle(.card)
@@ -1866,15 +1930,91 @@ struct PlayerScreen: View {
 
     private var vodChoiceFont: Font {
         #if os(tvOS)
-        .body.weight(.semibold)
+        .system(size: TVBoxTypography.readable(20), weight: .semibold)
         #else
         .callout.weight(.semibold)
         #endif
     }
 
+    private var vodSectionTitleFont: Font {
+        #if os(tvOS)
+        .system(size: TVBoxTypography.readable(17), weight: .semibold)
+        #else
+        .subheadline.weight(.semibold)
+        #endif
+    }
+
+    private var vodCountFont: Font {
+        #if os(tvOS)
+        .system(size: TVBoxTypography.readable(14), weight: .medium)
+        #else
+        .caption.weight(.medium)
+        #endif
+    }
+
+    private var vodChoiceSpacing: CGFloat {
+        #if os(tvOS)
+        18
+        #else
+        8
+        #endif
+    }
+
+    private var vodFocusRestoreKey: String {
+        "\(session.request.lineID)|\(session.request.episodeID)|\(session.request.queueIndex)"
+    }
+
+    private var vodChoiceHorizontalPadding: CGFloat {
+        #if os(tvOS)
+        20
+        #else
+        12
+        #endif
+    }
+
+    private var vodFocusHorizontalInset: CGFloat {
+        #if os(tvOS)
+        32
+        #else
+        0
+        #endif
+    }
+
+    private var vodFocusVerticalInset: CGFloat {
+        #if os(tvOS)
+        24
+        #else
+        0
+        #endif
+    }
+
+    private func vodChoiceBackground(isSelected: Bool) -> Color {
+        #if os(tvOS)
+        isSelected ? Color.tvboxAccent.opacity(0.18) : Color.primary.opacity(0.07)
+        #else
+        isSelected ? Color.tvboxAccent : Color.tvboxSurface
+        #endif
+    }
+
+    private func vodChoiceForeground(isSelected: Bool) -> Color {
+        #if os(tvOS)
+        Color.primary
+        #else
+        isSelected ? Color.white : Color.primary
+        #endif
+    }
+
+    private func vodChoiceIndicatorColor(isSelected: Bool) -> Color {
+        #if os(tvOS)
+        isSelected ? Color.tvboxAccent : Color.secondary
+        #else
+        isSelected ? Color.white : Color.secondary
+        #endif
+    }
+
     private var vodChoiceMinHeight: CGFloat {
         #if os(tvOS)
-        64
+        88
         #else
         44
         #endif
@@ -1994,38 +2134,63 @@ struct PlayerScreen: View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("分类")
-                    .font(.caption.weight(.semibold))
+                    .font(.system(size: TVBoxTypography.readable(17, minimum: 23), weight: .semibold))
                     .foregroundStyle(Color(uiColor: .secondaryLabel))
-                ScrollView {
-                    LazyVStack(spacing: 4) {
-                        ForEach(liveContext?.groups ?? []) { group in
-                            Button {
-                                selectedLiveGroupID = group.id
-                            } label: {
-                                Text(group.name)
-                                    .font(.system(size: 13, weight: .medium))
-                                    .lineLimit(2)
-                                    .foregroundStyle(Color(uiColor: .label))
-                                    .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
-                                    .padding(.horizontal, 9)
-                                    .background(group.id == selectedLiveGroup?.id ? Color.tvboxAccent.opacity(0.18) : .clear,
-                                                in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 12) {
+                            ForEach(liveContext?.groups ?? []) { group in
+                                Button {
+                                    selectedLiveGroupID = group.id
+                                    #if os(tvOS)
+                                    livePanelFocusTarget = "group:\(group.id)"
+                                    #endif
+                                } label: {
+                                    Text(group.name)
+                                        .font(.system(size: TVBoxTypography.readable(13), weight: .medium))
+                                        .lineLimit(2)
+                                        .foregroundStyle(Color(uiColor: .label))
+                                        .frame(maxWidth: .infinity, minHeight: TVBoxTypography.readable(42, minimum: 68), alignment: .leading)
+                                        .padding(.horizontal, 9)
+                                        .background(group.id == selectedLiveGroup?.id ? Color.tvboxAccent.opacity(0.18) : .clear,
+                                                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                }
+                                .platformFocusableButtonStyle()
+                                #if os(tvOS)
+                                .focused($livePanelFocusTarget, equals: "group:\(group.id)")
+                                #endif
+                                .accessibilityAddTraits(group.id == selectedLiveGroup?.id ? .isSelected : [])
+                                .id(group.id)
                             }
-                            .buttonStyle(.plain)
                         }
+                    }
+                    .onAppear {
+                        guard let groupID = selectedLiveGroup?.id else { return }
+                        proxy.scrollTo(groupID, anchor: .center)
+                        #if os(tvOS)
+                        Task { @MainActor in
+                            await Task.yield()
+                            guard landscapeLivePanel == .guide else { return }
+                            livePanelFocusTarget = "group:\(groupID)"
+                        }
+                        #endif
+                    }
+                    .onChange(of: selectedLiveGroupID) { _, groupID in
+                        guard let groupID else { return }
+                        proxy.scrollTo(groupID, anchor: .center)
                     }
                 }
             }
-            .frame(width: 112, alignment: .topLeading)
+            .frame(width: TVBoxTypography.readable(112, minimum: 220), alignment: .topLeading)
 
             Divider().padding(.horizontal, 8)
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("频道")
-                    .font(.caption.weight(.semibold))
+                    .font(.system(size: TVBoxTypography.readable(17, minimum: 23), weight: .semibold))
                     .foregroundStyle(Color(uiColor: .secondaryLabel))
                 ScrollView {
-                    LazyVStack(spacing: 4) {
+                    LazyVStack(spacing: 12) {
                         ForEach(selectedLiveGroup?.channels ?? []) { channel in
                             Button {
                                 if let group = selectedLiveGroup {
@@ -2035,10 +2200,10 @@ struct PlayerScreen: View {
                                 HStack(spacing: 8) {
                                     if let logoURL = channel.logoURL {
                                         CachedArtworkImage(url: logoURL, contentMode: .fit)
-                                            .frame(width: 30, height: 30)
+                                            .frame(width: TVBoxTypography.readable(30, minimum: 48), height: TVBoxTypography.readable(30, minimum: 48))
                                     }
                                     Text(channel.name)
-                                        .font(.system(size: 13, weight: .semibold))
+                                        .font(.system(size: TVBoxTypography.readable(13), weight: .semibold))
                                         .lineLimit(1)
                                     Spacer(minLength: 0)
                                     if channel.id == liveContext?.channelID && selectedLiveGroup?.id == liveContext?.groupID {
@@ -2049,12 +2214,12 @@ struct PlayerScreen: View {
                                 }
                                 .foregroundStyle(Color(uiColor: .label))
                                 .padding(.horizontal, 8)
-                                .frame(maxWidth: .infinity, minHeight: 42, alignment: .leading)
+                                .frame(maxWidth: .infinity, minHeight: TVBoxTypography.readable(42, minimum: 68), alignment: .leading)
                                 .background(channel.id == liveContext?.channelID && selectedLiveGroup?.id == liveContext?.groupID
                                             ? Color.tvboxAccent.opacity(0.18) : .clear,
                                             in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                             }
-                            .buttonStyle(.plain)
+                            .platformFocusableButtonStyle()
                             #if os(tvOS)
                             .focused($livePanelFocusTarget, equals: "channel:\(selectedLiveGroup?.id ?? ""):\(channel.id)")
                             #endif
@@ -2063,13 +2228,13 @@ struct PlayerScreen: View {
                     }
                 }
             }
-            .frame(width: 148, alignment: .topLeading)
+            .frame(width: TVBoxTypography.readable(148, minimum: 310), alignment: .topLeading)
 
             Divider().padding(.horizontal, 8)
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("节目")
-                    .font(.caption.weight(.semibold))
+                    .font(.system(size: TVBoxTypography.readable(17, minimum: 23), weight: .semibold))
                     .foregroundStyle(Color(uiColor: .secondaryLabel))
                 liveGuideContent
             }
@@ -2081,23 +2246,27 @@ struct PlayerScreen: View {
         VStack(spacing: 10) {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: TVBoxTypography.readable(8, minimum: 20)) {
                         ForEach(liveGuideDates, id: \.self) { date in
                             let isSelected = liveGuideCalendar.isDate(date, inSameDayAs: liveGuideDate)
                             Button {
                                 liveGuideDate = date
                             } label: {
                                 Text(liveDateTitle(date))
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .padding(.horizontal, 13)
-                                    .padding(.vertical, 8)
+                                    .font(.system(size: TVBoxTypography.readable(12, minimum: 23), weight: .semibold))
+                                    .fixedSize()
+                                    .frame(minWidth: TVBoxTypography.readable(120, minimum: 150), minHeight: TVBoxTypography.readable(42, minimum: 56))
+                                    .padding(.horizontal, TVBoxTypography.readable(13, minimum: 20))
+                                    .padding(.vertical, TVBoxTypography.readable(8, minimum: 14))
                                     .foregroundStyle(isSelected ? Color.white : Color(uiColor: .label))
                                     .background(isSelected ? Color.tvboxAccent : Color.tvboxSurface, in: Capsule())
                             }
-                            .buttonStyle(.plain)
+                            .platformFocusableButtonStyle()
+                            .accessibilityAddTraits(isSelected ? .isSelected : [])
                             .id(date)
                         }
                     }
+                    .padding(.vertical, 24)
                 }
                 .onAppear {
                     focusLiveGuideDateForPlayback()
@@ -2161,6 +2330,7 @@ struct PlayerScreen: View {
                                 Image(systemName: source.id == liveContext?.sourceID ? "checkmark.circle.fill" : "circle")
                                     .foregroundStyle(source.id == liveContext?.sourceID ? Color.tvboxAccent : Color.secondary)
                                 Text(source.name)
+                                    .font(.system(size: TVBoxTypography.readable(17)))
                                     .lineLimit(1)
                                     .foregroundStyle(Color(uiColor: .label))
                                 Spacer()
@@ -2170,12 +2340,13 @@ struct PlayerScreen: View {
                                         .foregroundStyle(Color.tvboxAccent)
                                 }
                             }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 12)
+                            .padding(.horizontal, TVBoxTypography.readable(14, minimum: 22))
+                            .padding(.vertical, TVBoxTypography.readable(12, minimum: 20))
+                            .frame(minHeight: TVBoxTypography.readable(64, minimum: 96))
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
-                        .buttonStyle(.plain)
+                        .platformFocusableButtonStyle()
                         #if os(tvOS)
                         .focused($livePanelFocusTarget, equals: "source:\(source.id)")
                         #endif
@@ -2214,32 +2385,33 @@ struct PlayerScreen: View {
         } label: {
             HStack(spacing: 12) {
                 Text(program.start)
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .font(.system(size: TVBoxTypography.readable(13, minimum: 23), weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(Color.tvboxAccent)
-                    .frame(width: 48, alignment: .leading)
+                    .frame(width: TVBoxTypography.readable(48, minimum: 88), alignment: .leading)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(program.title)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: TVBoxTypography.readable(14), weight: .semibold))
                         .foregroundStyle(Color(uiColor: .label))
                         .lineLimit(2)
                     Text("至 \(program.end)")
-                        .font(.system(size: 11))
+                        .font(.system(size: TVBoxTypography.readable(11, minimum: 23)))
                         .foregroundStyle(Color(uiColor: .secondaryLabel))
                 }
                 Spacer(minLength: 4)
                 Text(status)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: TVBoxTypography.readable(11, minimum: 23), weight: .medium))
                     .foregroundStyle(target == nil ? Color(uiColor: .secondaryLabel) : statusColor)
                     .lineLimit(1)
             }
-            .padding(.vertical, 11)
-            .padding(.horizontal, 10)
+            .padding(.vertical, TVBoxTypography.readable(11, minimum: 18))
+            .padding(.horizontal, TVBoxTypography.readable(10, minimum: 18))
+            .frame(minHeight: TVBoxTypography.readable(68, minimum: 104))
             .background(isPlaying ? Color.tvboxAccent.opacity(0.14) : .clear,
                         in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .platformFocusableButtonStyle()
         .disabled(target == nil)
     }
 
@@ -2265,13 +2437,22 @@ struct PlayerScreen: View {
         size: CGSize,
         safeAreaInsets: EdgeInsets
     ) -> some View {
-        return VStack(spacing: 10) {
+        let availablePanelWidth = max(320, size.width - safeAreaInsets.leading - safeAreaInsets.trailing - 160)
+        #if os(tvOS)
+        let playlistPanelWidth = min(max(size.width * 0.46, 520), min(860, availablePanelWidth))
+        #else
+        let playlistPanelWidth = min(max(size.width * 0.42, 360), max(280, size.width - safeAreaInsets.leading - safeAreaInsets.trailing - 48))
+        #endif
+
+        return VStack(spacing: 14) {
             HStack {
                 Text(panel.rawValue)
-                    .font(.headline)
+                    .font(.system(size: TVBoxTypography.readable(20), weight: .bold, design: .rounded))
                 Spacer()
                 Button("完成") { toggleLivePanel(panel) }
                     .buttonStyle(.bordered)
+                    .font(.system(size: TVBoxTypography.readable(16), weight: .semibold))
+                    .frame(minHeight: TVBoxTypography.readable(48, minimum: 64))
             }
             livePanelContent(panel)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -2281,11 +2462,11 @@ struct PlayerScreen: View {
         .padding(.leading, 14 + (panel != .sources ? safeAreaInsets.leading : 0))
         .padding(.trailing, 14 + (panel == .sources ? safeAreaInsets.trailing : 0))
         .frame(width: panel == .guide
-            ? min(max(size.width * 0.78, 560), 1_000)
-            : panel == .playlist ? min(max(size.width * 0.42, 360), 620)
+            ? min(max(size.width * 0.88, 1_200), max(560, size.width - 160))
+            : panel == .playlist ? playlistPanelWidth
             : min(max(size.width * 0.32, 280), 390))
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(.ultraThinMaterial)
+        .background(.regularMaterial)
         .foregroundStyle(Color(uiColor: .label))
         .contentShape(Rectangle())
         .simultaneousGesture(TapGesture().onEnded { })
@@ -2463,9 +2644,8 @@ struct PlayerScreen: View {
             playerSurfaceFocused = false
             Task { @MainActor in
                 await Task.yield()
-                if panel == .guide, let context = liveContext, let channel = context.currentChannel {
-                    livePanelFocusTarget = "channel:\(context.groupID):\(channel.id)"
-                } else if let source = liveContext?.currentSource {
+                guard landscapeLivePanel == panel else { return }
+                if panel == .sources, let source = liveContext?.currentSource {
                     livePanelFocusTarget = "source:\(source.id)"
                 }
             }
@@ -2483,7 +2663,7 @@ struct PlayerScreen: View {
                 .font(.system(size: 30))
                 .foregroundStyle(.orange)
             Text("无法播放此地址")
-                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .font(.system(size: TVBoxTypography.readable(20), weight: .bold, design: .rounded))
             Button("重试") { session.retry() }
                 .buttonStyle(.borderedProminent)
         }
@@ -2500,7 +2680,7 @@ struct PlayerScreen: View {
 
             HStack(spacing: compact ? 8 : 12) {
                 Text(isScrubbing ? Self.clockString(fraction: seekValue, duration: session.durationText) : session.elapsedText)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .font(.system(size: TVBoxTypography.readable(11, minimum: 23), weight: .medium, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.82))
                     .fixedSize()
                 #if os(tvOS)
@@ -2522,7 +2702,7 @@ struct PlayerScreen: View {
                 .disabled(!session.canSeek)
                 #endif
                 Text(session.durationText)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .font(.system(size: TVBoxTypography.readable(11, minimum: 23), weight: .medium, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.82))
                     .fixedSize()
             }
@@ -2537,15 +2717,20 @@ struct PlayerScreen: View {
             }
             if compact {
                 Text(isSwitchingEpisode ? "正在切换剧集…" : session.status)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: TVBoxTypography.readable(11, minimum: 23), weight: .medium))
                     .foregroundStyle(.white.opacity(0.78))
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(.horizontal, compact ? 13 : 18)
         .padding(.vertical, compact ? 12 : 15)
+        #if os(tvOS)
+        .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: compact ? 18 : 22, style: .continuous))
+        #else
         .background(.black.opacity(0.68), in: RoundedRectangle(cornerRadius: compact ? 18 : 22, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: compact ? 18 : 22).strokeBorder(.white.opacity(0.09), lineWidth: 1))
+        #endif
+        .simultaneousGesture(TapGesture().onEnded { revealControls() })
         #if os(tvOS)
         .focusSection()
         #endif
@@ -2564,10 +2749,10 @@ struct PlayerScreen: View {
                 session.togglePlayback()
             } label: {
                 Image(systemName: session.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: compact ? 20 : 18, weight: .bold))
-                    .frame(width: compact ? 60 : 52, height: compact ? 60 : 52)
+                    .font(.system(size: TVBoxTypography.readable(compact ? 20 : 18, minimum: 32), weight: .bold))
+                    .frame(width: TVBoxTypography.readable(compact ? 60 : 52, minimum: 88), height: TVBoxTypography.readable(compact ? 60 : 52, minimum: 88))
             }
-            .buttonStyle(PlayerControlButtonStyle(isAccent: true))
+            .playerControlButtonStyle(isAccent: true)
             #if os(tvOS)
             .focused($playControlFocused)
             #endif
@@ -2581,7 +2766,7 @@ struct PlayerScreen: View {
             if !compact {
                 Spacer(minLength: 12)
                 Text(isSwitchingEpisode ? "正在切换剧集…" : session.status)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: TVBoxTypography.readable(12, minimum: 23), weight: .medium))
                     .foregroundStyle(.white.opacity(0.78))
                     .lineLimit(1)
             }
@@ -2598,10 +2783,10 @@ struct PlayerScreen: View {
         } label: {
             Label(title, systemImage: systemImage)
                 .labelStyle(.iconOnly)
-                .font(.system(size: 17, weight: .semibold))
-                .frame(width: 42, height: 42)
+                .font(.system(size: TVBoxTypography.readable(17, minimum: 28), weight: .semibold))
+                .frame(width: TVBoxTypography.readable(42, minimum: 72), height: TVBoxTypography.readable(42, minimum: 72))
         }
-        .buttonStyle(PlayerControlButtonStyle())
+        .playerControlButtonStyle()
         .accessibilityLabel(title)
     }
 
@@ -2621,7 +2806,7 @@ struct PlayerScreen: View {
                 } label: {
                     trackMenuLabel(title: "画中画", systemImage: "pip.enter")
                 }
-                .buttonStyle(PlayerControlButtonStyle())
+                .playerControlButtonStyle()
                 .accessibilityLabel("开始画中画播放")
             }
 #endif
@@ -2640,7 +2825,7 @@ struct PlayerScreen: View {
                 } label: {
                     trackMenuLabel(title: "字幕", systemImage: "captions.bubble")
                 }
-                .buttonStyle(PlayerControlButtonStyle())
+                .playerControlButtonStyle()
                 #else
                 trackMenu(title: "字幕", systemImage: "captions.bubble", options: session.subtitleTracks, selectedIndex: session.selectedSubtitleTrackIndex) {
                     session.selectSubtitleTrack($0)
@@ -2665,7 +2850,7 @@ struct PlayerScreen: View {
             } label: {
                 playbackRateLabel
             }
-            .buttonStyle(PlayerControlButtonStyle())
+            .playerControlButtonStyle()
             .accessibilityLabel("播放速度：\(session.playbackRate == 1 ? "正常速度" : Self.rateLabel(Double(session.playbackRate)))")
             #else
             Menu {
@@ -2677,14 +2862,14 @@ struct PlayerScreen: View {
             } label: {
                 playbackRateLabel
             }
-            .buttonStyle(PlayerControlButtonStyle())
+            .playerControlButtonStyle()
             .accessibilityLabel("播放速度：\(session.playbackRate == 1 ? "正常速度" : Self.rateLabel(Double(session.playbackRate)))")
             #endif
             #if os(iOS)
             Button(action: toggleOrientation) {
                 trackMenuLabel(title: "横竖屏", systemImage: "rotate.right")
             }
-            .buttonStyle(PlayerControlButtonStyle())
+            .playerControlButtonStyle()
             .accessibilityLabel("切换横竖屏")
             #endif
             Spacer(minLength: 0)
@@ -2709,7 +2894,7 @@ struct PlayerScreen: View {
         } label: {
             danmakuMenuLabel
         }
-        .buttonStyle(PlayerControlButtonStyle())
+        .playerControlButtonStyle()
         .accessibilityLabel("弹幕菜单")
         .accessibilityHint(danmakuLoadError ?? danmakuMatchTitle.map { "当前匹配：\($0)" } ?? "在线搜索、切换显示或调整弹幕")
         #else
@@ -2720,7 +2905,7 @@ struct PlayerScreen: View {
         } label: {
             danmakuMenuLabel
         }
-        .buttonStyle(PlayerControlButtonStyle())
+        .playerControlButtonStyle()
         .accessibilityLabel("弹幕菜单")
         .accessibilityHint(danmakuLoadError ?? danmakuMatchTitle.map { "当前匹配：\($0)" } ?? "在线搜索、切换显示或调整弹幕")
         #endif
@@ -2820,7 +3005,7 @@ struct PlayerScreen: View {
         } label: {
             trackMenuLabel(title: session.aspectRatioLabel, systemImage: "aspectratio")
         }
-        .buttonStyle(PlayerControlButtonStyle())
+        .playerControlButtonStyle()
         .accessibilityLabel("画面比例：\(session.aspectRatioLabel)")
         #else
         Menu {
@@ -2838,7 +3023,7 @@ struct PlayerScreen: View {
         } label: {
             trackMenuLabel(title: session.aspectRatioLabel, systemImage: "aspectratio")
         }
-        .buttonStyle(PlayerControlButtonStyle())
+        .playerControlButtonStyle()
         .accessibilityLabel("画面比例：\(session.aspectRatioLabel)")
         #endif
     }
@@ -2880,37 +3065,54 @@ struct PlayerScreen: View {
 
     #if os(tvOS)
     private var tvProgressControl: some View {
-        Button {} label: {
-            GeometryReader { geometry in
-                let fraction = min(1, max(0, session.progress))
-                ZStack(alignment: .leading) {
-                    Capsule().fill(.white.opacity(0.25)).frame(height: 6)
-                    Capsule().fill(Color.tvboxAccent).frame(width: geometry.size.width * CGFloat(fraction), height: 6)
+        GeometryReader { geometry in
+            let fraction = min(1, max(0, session.progress))
+            let inset = min(24, geometry.size.width / 2)
+            let trackWidth = max(0, geometry.size.width - inset * 2)
+            let knobCenter = inset + trackWidth * CGFloat(fraction)
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(.white.opacity(0.28))
+                    .frame(width: trackWidth, height: 6)
+                    .offset(x: inset)
+                Capsule()
+                    .fill(Color.tvboxAccent)
+                    .frame(width: trackWidth * CGFloat(fraction), height: 6)
+                    .offset(x: inset)
+
+                Button {} label: {
                     Circle()
                         .fill(.white)
-                        .frame(width: 12, height: 12)
-                        .offset(x: max(0, geometry.size.width * CGFloat(fraction) - 6))
+                        .frame(width: 18, height: 18)
+                        .frame(width: 48, height: 48)
+                        .contentShape(.interaction, Circle())
+                        .contentShape(.hoverEffect, Circle())
                 }
-                .frame(maxHeight: .infinity)
+                .buttonStyle(.card)
+                .focused($progressFocused)
+                .disabled(!session.canSeek)
+                .position(x: knobCenter, y: geometry.size.height / 2)
+                .accessibilityLabel("播放进度")
+                .accessibilityValue("\(session.elapsedText) / \(session.durationText)")
+                .accessibilityAdjustableAction { direction in
+                    switch direction {
+                    case .increment: session.seek(by: 15)
+                    case .decrement: session.seek(by: -15)
+                    @unknown default: break
+                    }
+                }
+                .onMoveCommand { direction in
+                    switch direction {
+                    case .left: session.seek(by: -15)
+                    case .right: session.seek(by: 15)
+                    default: break
+                    }
+                }
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: 28)
-            .padding(.horizontal, 6)
-            .background(progressFocused ? .white.opacity(0.12) : .clear, in: Capsule())
-            .overlay(Capsule().strokeBorder(progressFocused ? .white.opacity(0.85) : .clear, lineWidth: 2))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .buttonStyle(.plain)
-        .focused($progressFocused)
-        .disabled(!session.canSeek)
-        .accessibilityLabel("播放进度")
-        .accessibilityValue("\(session.elapsedText) / \(session.durationText)")
-        .onMoveCommand { direction in
-            switch direction {
-            case .left: session.seek(by: -15)
-            case .right: session.seek(by: 15)
-            default: break
-            }
-        }
+        .frame(height: 56)
     }
     #endif
 
@@ -2936,15 +3138,15 @@ struct PlayerScreen: View {
         } label: {
             trackMenuLabel(title: title, systemImage: systemImage)
         }
-        .buttonStyle(PlayerControlButtonStyle())
+        .playerControlButtonStyle()
         .accessibilityLabel(title)
     }
 
     private func trackMenuLabel(title: String, systemImage: String) -> some View {
         Image(systemName: systemImage)
-            .font(.system(size: 16, weight: .semibold))
-            .frame(width: 42, height: 42)
-            .contentShape(Circle())
+            .font(.system(size: TVBoxTypography.readable(16, minimum: 28), weight: .semibold))
+            .frame(width: TVBoxTypography.readable(42, minimum: 72), height: TVBoxTypography.readable(42, minimum: 72))
+            .contentShape(Capsule())
             .accessibilityLabel(title)
     }
 
@@ -2964,7 +3166,7 @@ struct PlayerScreen: View {
         } label: {
             trackMenuLabel(title: "线路", systemImage: "rectangle.stack")
         }
-        .buttonStyle(PlayerControlButtonStyle())
+        .playerControlButtonStyle()
         .accessibilityLabel("播放线路")
         #else
         Menu {
@@ -2982,7 +3184,7 @@ struct PlayerScreen: View {
         } label: {
             trackMenuLabel(title: "线路", systemImage: "rectangle.stack")
         }
-        .buttonStyle(PlayerControlButtonStyle())
+        .playerControlButtonStyle()
         .accessibilityLabel("播放线路")
         #endif
     }
@@ -3008,12 +3210,14 @@ struct PlayerScreen: View {
                 )
                 guard !Task.isCancelled else { return }
                 session.replace(with: next)
-                #if os(tvOS)
-                if landscapeLivePanel == .playlist { livePanelFocusTarget = "vod:\(episode.id)" }
-                #endif
             } catch {
                 guard !Task.isCancelled else { return }
                 errorMessage = error.localizedDescription
+                #if os(tvOS)
+                if landscapeLivePanel == .playlist, let currentEpisode {
+                    livePanelFocusTarget = "vod:\(currentEpisode.id)"
+                }
+                #endif
             }
             guard !Task.isCancelled else { return }
             isSwitchingEpisode = false
@@ -3038,12 +3242,14 @@ struct PlayerScreen: View {
                 )
                 guard !Task.isCancelled else { return }
                 session.replace(with: next)
-                #if os(tvOS)
-                if landscapeLivePanel == .playlist { livePanelFocusTarget = "vod:\(episode.id)" }
-                #endif
             } catch {
                 guard !Task.isCancelled else { return }
                 errorMessage = error.localizedDescription
+                #if os(tvOS)
+                if landscapeLivePanel == .playlist, current.queue.indices.contains(current.queueIndex) {
+                    livePanelFocusTarget = "vod:\(current.queue[current.queueIndex].id)"
+                }
+                #endif
             }
             guard !Task.isCancelled else { return }
             isSwitchingEpisode = false
@@ -3097,7 +3303,7 @@ struct PlayerScreen: View {
 
     private func playerPadding(compact: Bool) -> CGFloat {
         #if os(tvOS)
-        return 54
+        return 80
         #else
         return compact ? 15 : 24
         #endif
@@ -3133,5 +3339,15 @@ private struct PlayerControlButtonStyle: ButtonStyle {
             .overlay(Capsule().strokeBorder(isFocused ? .white.opacity(0.85) : .clear, lineWidth: 2))
             .scaleEffect(configuration.isPressed ? 0.94 : (isFocused ? 1.06 : 1))
             .animation(.easeOut(duration: 0.12), value: isFocused)
+    }
+}
+
+private extension View {
+    func playerControlButtonStyle(isAccent: Bool = false) -> some View {
+        #if os(tvOS)
+        self.buttonStyle(.card)
+        #else
+        self.buttonStyle(PlayerControlButtonStyle(isAccent: isAccent))
+        #endif
     }
 }

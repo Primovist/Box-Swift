@@ -21,6 +21,11 @@ struct DanmakuSearchView: View {
     @State private var isLoading = false
     @State private var message: String?
     @State private var requestGeneration = 0
+    #if os(tvOS)
+    @FocusState private var focusedResultID: String?
+    @State private var pendingResultFocusID: String?
+    @State private var resultFocusRequestVersion = 0
+    #endif
 
     let initialQuery: String
     var mediaTitle: String = ""
@@ -34,61 +39,16 @@ struct DanmakuSearchView: View {
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
-                let compact = geometry.size.width > geometry.size.height
+                #if os(tvOS)
+                let compact = false
+                #else
+                let compact = geometry.size.height < 520
+                #endif
                 ZStack {
                     ScreenBackground()
-                    VStack(alignment: .leading, spacing: compact ? 8 : 16) {
-                        if !compact && !mediaTitle.isEmpty {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("当前播放")
-                                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                                    .foregroundStyle(Color.tvboxCyan)
-                                Text(playbackContext)
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(Color.tvboxMuted)
-                                    .lineLimit(2)
-                            }
-                        }
-
-                        if apiAddress.isEmpty {
-                            Group {
-                                if compact {
-                                    Text("未配置弹幕源，请在设置中填写 DandanPlay 兼容地址。")
-                                        .font(.system(size: 11))
-                                        .lineLimit(1)
-                                } else {
-                                    Text("未配置弹幕源。请先在设置中填写 DandanPlay 兼容的 danmu_api 地址。")
-                                        .font(.system(size: 12))
-                                        .multilineTextAlignment(.center)
-                                }
-                            }
-                            .foregroundStyle(Color.tvboxMuted)
-                            .frame(maxWidth: .infinity, alignment: compact ? .leading : .center)
-                        } else if isLoading {
-                            HStack(spacing: 8) {
-                                ProgressView().tint(.white)
-                                Text(message ?? "正在搜索…")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(Color.tvboxMuted)
-                                    .lineLimit(1)
-                            }
-                        } else if let message {
-                            Text(message)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(Color.tvboxMuted)
-                                .lineLimit(compact ? 1 : 2)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-
-                        resultsList
-                    }
-                    .padding(.horizontal, compact ? 22 : 22)
-                    .padding(.vertical, compact ? 8 : 18)
-                    .frame(maxWidth: 1000, maxHeight: .infinity, alignment: .topLeading)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    resultsList(compact: compact, availableSize: geometry.size)
                     #if os(iOS)
                     .simultaneousGesture(TapGesture().onEnded { isSearchFocused = false })
-                    .scrollDismissesKeyboard(.interactively)
                     #endif
                 }
             }
@@ -121,54 +81,233 @@ struct DanmakuSearchView: View {
         }
     }
 
-    private var resultsList: some View {
-        ScrollView {
-            LazyVStack(spacing: 9) {
-                if autoMatchedTitle != nil {
-                    Button {
-                        Task { await search() }
-                    } label: {
-                        Label("不满意？手动搜索其他作品或集数", systemImage: "magnifyingglass")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .buttonStyle(FocusAwareButtonStyle())
-                }
+    private func resultsList(compact: Bool, availableSize: CGSize) -> some View {
+        let horizontalPadding = compact ? 16 : searchHorizontalPadding
+        let availableContentWidth = max(0, availableSize.width)
+        let contentWidth = min(searchContentMaxWidth, availableContentWidth)
+        let resultWidth = min(resultsMaxWidth, contentWidth)
 
-                if let selectedAnime {
-                    Button {
-                        self.selectedAnime = nil
-                        episodeResults = []
-                        message = animeResults.isEmpty ? nil : "选择作品后，再选择对应集数。"
-                    } label: {
-                        Label("返回作品列表 · \(selectedAnime.title)", systemImage: "chevron.left")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .buttonStyle(FocusAwareButtonStyle())
-                }
-
-                if selectedAnime == nil {
-                    ForEach(animeResults) { anime in
-                        resultButton(title: anime.title, subtitle: animeSubtitle(anime), icon: "film") {
-                            Task { await loadEpisodes(for: anime) }
+        return ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: compact ? 8 : 16) {
+                    if !mediaTitle.isEmpty {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("当前播放")
+                                .font(contextLabelFont)
+                                .foregroundStyle(Color.tvboxCyan)
+                            Text(playbackContext)
+                                .font(contextValueFont)
+                                .foregroundStyle(Color.tvboxMuted)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                } else {
-                    ForEach(orderedEpisodeResults) { episode in
-                        let suggested = suggestedEpisodeIDs.contains(episode.id)
-                        resultButton(
-                            title: episode.title,
-                            subtitle: suggested ? "与当前第 \(currentEpisodeNumber ?? 0) 集相符 · 点击确认" : "选择此集加载弹幕",
-                            icon: suggested ? "checkmark.circle.fill" : "play.rectangle"
-                        ) {
-                            Task { await loadComments(for: episode) }
+
+                    if apiAddress.isEmpty {
+                        statusBanner("未配置弹幕源。请先在设置中填写 DandanPlay 兼容的 danmu_api 地址。")
+                    } else if let message {
+                        statusBanner(message, isLoading: isLoading)
+                    } else if animeResults.isEmpty, selectedAnime == nil, autoMatchedTitle == nil {
+                        statusBanner("输入作品名，搜索可用弹幕作品。")
+                    }
+
+                    LazyVStack(spacing: resultFocusSpacing) {
+                        if autoMatchedTitle != nil {
+                            resultActionButton(
+                                title: "不满意？手动搜索其他作品或集数",
+                                icon: "magnifyingglass",
+                                focusID: "manualSearch",
+                                isDisabled: isLoading
+                            ) {
+                                Task { await search() }
+                            }
+                        }
+
+                        if let selectedAnime {
+                            resultActionButton(
+                                title: "返回作品列表 · \(selectedAnime.title)",
+                                icon: "chevron.left",
+                                focusID: "backToResults"
+                            ) {
+                                returnToAnimeResults()
+                            }
+                        }
+
+                        if selectedAnime == nil {
+                            ForEach(animeResults) { anime in
+                                resultButton(
+                                    title: anime.title,
+                                    subtitle: animeSubtitle(anime),
+                                    icon: "film",
+                                    focusID: "anime:\(anime.id)"
+                                ) {
+                                    Task { await loadEpisodes(for: anime) }
+                                }
+                            }
+                        } else {
+                            ForEach(orderedEpisodeResults) { episode in
+                                let suggested = suggestedEpisodeIDs.contains(episode.id)
+                                resultButton(
+                                    title: episode.title,
+                                    subtitle: suggested ? "与当前第 \(currentEpisodeNumber ?? 0) 集相符 · 点击确认" : "选择此集加载弹幕",
+                                    icon: suggested ? "checkmark.circle.fill" : "play.rectangle",
+                                    focusID: "episode:\(episode.id)"
+                                ) {
+                                    Task { await loadComments(for: episode) }
+                                }
+                            }
                         }
                     }
+                    .padding(.vertical, resultFocusPadding)
+                    .frame(maxWidth: resultWidth)
+                    .frame(maxWidth: .infinity)
+                }
+                .padding(.horizontal, horizontalPadding)
+                .padding(.vertical, compact ? 10 : 22)
+                .frame(maxWidth: contentWidth, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .top)
+            }
+            .frame(maxHeight: .infinity)
+            #if os(iOS)
+            .scrollDismissesKeyboard(.interactively)
+            #endif
+            #if os(tvOS)
+            .onChange(of: resultFocusRequestVersion) { _, version in
+                guard let focusID = pendingResultFocusID else { return }
+                proxy.scrollTo(focusID, anchor: .center)
+                Task { @MainActor in
+                    await Task.yield()
+                    guard resultFocusRequestVersion == version else { return }
+                    focusedResultID = focusID
                 }
             }
-            .frame(maxWidth: 900)
-            .frame(maxWidth: .infinity)
+            #endif
         }
-        .frame(maxHeight: .infinity)
+    }
+
+    private var contextLabelFont: Font {
+        #if os(tvOS)
+        .system(size: TVBoxTypography.readable(14, minimum: 23), weight: .semibold, design: .rounded)
+        #else
+        .caption.weight(.semibold)
+        #endif
+    }
+
+    private var contextValueFont: Font {
+        #if os(tvOS)
+        .system(size: TVBoxTypography.readable(12, minimum: 23), weight: .medium)
+        #else
+        .subheadline
+        #endif
+    }
+
+    private var statusFont: Font {
+        #if os(tvOS)
+        .system(size: TVBoxTypography.readable(12, minimum: 23), weight: .medium)
+        #else
+        .subheadline
+        #endif
+    }
+
+    private var resultTitleFont: Font {
+        #if os(tvOS)
+        .system(size: TVBoxTypography.readable(14), weight: .semibold)
+        #else
+        .headline
+        #endif
+    }
+
+    private var resultSubtitleFont: Font {
+        #if os(tvOS)
+        .system(size: TVBoxTypography.readable(11, minimum: 23))
+        #else
+        .subheadline
+        #endif
+    }
+
+    private var searchActionFont: Font {
+        #if os(tvOS)
+        .system(size: TVBoxTypography.readable(16, minimum: 24), weight: .semibold)
+        #else
+        .body.weight(.medium)
+        #endif
+    }
+
+    private var searchContentMaxWidth: CGFloat {
+        #if os(tvOS)
+        1_800
+        #else
+        920
+        #endif
+    }
+
+    private var resultsMaxWidth: CGFloat {
+        #if os(tvOS)
+        1_680
+        #else
+        880
+        #endif
+    }
+
+    private var searchHorizontalPadding: CGFloat {
+        #if os(tvOS)
+        64
+        #else
+        22
+        #endif
+    }
+
+    private var resultFocusPadding: CGFloat {
+        #if os(tvOS)
+        24
+        #else
+        8
+        #endif
+    }
+
+    private var resultRowMinimumHeight: CGFloat {
+        #if os(tvOS)
+        120
+        #else
+        72
+        #endif
+    }
+
+    private var actionRowMinimumHeight: CGFloat {
+        #if os(tvOS)
+        88
+        #else
+        54
+        #endif
+    }
+
+    private var resultFocusSpacing: CGFloat {
+        #if os(tvOS)
+        18
+        #else
+        10
+        #endif
+    }
+
+    private func statusBanner(_ text: String, isLoading: Bool = false) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            if isLoading {
+                ProgressView()
+                    .controlSize(.large)
+                    .tint(Color.tvboxAccent)
+            } else {
+                Image(systemName: "info.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(Color.tvboxAccent)
+            }
+            Text(text)
+                .font(statusFont)
+                .foregroundStyle(Color.primary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 
     private var playbackContext: String {
@@ -222,25 +361,74 @@ struct DanmakuSearchView: View {
         return nil
     }
 
-    private func resultButton(title: String, subtitle: String, icon: String, action: @escaping () -> Void) -> some View {
+    private func resultButton(
+        title: String,
+        subtitle: String,
+        icon: String,
+        focusID: String,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             HStack(spacing: 13) {
                 Image(systemName: icon)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: TVBoxTypography.readable(16, minimum: 24), weight: .semibold))
                     .foregroundStyle(Color.tvboxCyan)
-                    .frame(width: 38, height: 38)
+                    .frame(width: TVBoxTypography.readable(38, minimum: 60), height: TVBoxTypography.readable(38, minimum: 60))
                     .background(Color.tvboxCyan.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.primary).lineLimit(2)
-                    Text(subtitle).font(.system(size: 11)).foregroundStyle(Color.tvboxMuted).lineLimit(2)
+                    Text(title)
+                        .font(resultTitleFont)
+                        .foregroundStyle(Color.primary)
+                        #if os(tvOS)
+                        .lineLimit(2)
+                        #else
+                        .fixedSize(horizontal: false, vertical: true)
+                        #endif
+                    Text(subtitle)
+                        .font(resultSubtitleFont)
+                        .foregroundStyle(Color.tvboxMuted)
+                        #if os(tvOS)
+                        .lineLimit(2)
+                        #else
+                        .fixedSize(horizontal: false, vertical: true)
+                        #endif
                 }
                 Spacer(minLength: 8)
-                Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(Color.tvboxMuted)
+                Image(systemName: "chevron.right").font(.system(size: TVBoxTypography.readable(10, minimum: 20), weight: .bold)).foregroundStyle(Color.tvboxMuted)
             }
-            .padding(12)
+            .padding(TVBoxTypography.readable(12, minimum: 20))
+            .frame(minHeight: resultRowMinimumHeight)
             .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 15))
         }
-        .buttonStyle(FocusAwareButtonStyle())
+        .platformFocusableButtonStyle()
+        #if os(tvOS)
+        .focused($focusedResultID, equals: focusID)
+        #endif
+        .disabled(isLoading)
+        .id(focusID)
+    }
+
+    private func resultActionButton(
+        title: String,
+        icon: String,
+        focusID: String,
+        isDisabled: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .font(searchActionFont)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 16)
+                .frame(maxWidth: .infinity, minHeight: actionRowMinimumHeight, alignment: .leading)
+                .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+        }
+        .platformFocusableButtonStyle()
+        #if os(tvOS)
+        .focused($focusedResultID, equals: focusID)
+        #endif
+        .disabled(isDisabled)
+        .id(focusID)
     }
 
     @MainActor
@@ -248,10 +436,17 @@ struct DanmakuSearchView: View {
         let keyword = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !keyword.isEmpty, !apiAddress.isEmpty else { return }
         let generation = nextGeneration()
+        #if os(iOS)
+        isSearchFocused = false
+        #endif
+        #if os(tvOS)
+        focusedResultID = nil
+        #endif
         isLoading = true
         message = "正在搜索作品…"
         autoMatchedTitle = nil
         selectedAnime = nil
+        animeResults = []
         episodeResults = []
         suggestedEpisodeIDs = []
         do {
@@ -259,6 +454,7 @@ struct DanmakuSearchView: View {
             guard generation == requestGeneration else { return }
             animeResults = results
             message = results.isEmpty ? "没有找到匹配作品。" : "找到 \(results.count) 个作品，选择作品后再选集。"
+            requestResultFocus(results.first.map { "anime:\($0.id)" })
         } catch {
             guard generation == requestGeneration else { return }
             animeResults = []
@@ -285,6 +481,7 @@ struct DanmakuSearchView: View {
             autoMatchedTitle = match.matchTitle
             message = "已自动匹配并加载：\(match.matchTitle)"
             onLoad(match.comments, match.matchTitle)
+            requestResultFocus("manualSearch")
         } catch {
             guard generation == requestGeneration else { return }
             autoMatchedTitle = nil
@@ -296,12 +493,15 @@ struct DanmakuSearchView: View {
     @MainActor
     private func loadEpisodes(for anime: DanmakuAnime) async {
         let generation = nextGeneration()
+        selectedAnime = anime
+        episodeResults = []
+        suggestedEpisodeIDs = []
         isLoading = true
         message = "正在读取《\(anime.title)》的集数…"
+        requestResultFocus("backToResults")
         do {
             let results = try await service.episodes(for: anime, apiAddress: apiAddress)
             guard generation == requestGeneration else { return }
-            selectedAnime = anime
             episodeResults = results
             if let currentEpisodeNumber {
                 suggestedEpisodeIDs = Set(results.filter {
@@ -316,9 +516,12 @@ struct DanmakuSearchView: View {
                 suggestedEpisodeIDs = []
                 message = results.isEmpty ? "此作品没有可选集数。" : "请核对作品信息后，选择对应集数。"
             }
+            let recommendedEpisode = orderedEpisodeResults.first?.id
+            requestResultFocus(recommendedEpisode.map { "episode:\($0)" } ?? "backToResults")
         } catch {
             guard generation == requestGeneration else { return }
             message = error.localizedDescription
+            requestResultFocus("backToResults")
         }
         if generation == requestGeneration { isLoading = false }
     }
@@ -338,8 +541,30 @@ struct DanmakuSearchView: View {
         } catch {
             guard generation == requestGeneration else { return }
             message = error.localizedDescription
+            requestResultFocus("episode:\(episode.id)")
         }
         if generation == requestGeneration { isLoading = false }
+    }
+
+    @MainActor
+    private func returnToAnimeResults() {
+        let previousAnimeFocusID = selectedAnime.map { "anime:\($0.id)" }
+        requestGeneration += 1
+        isLoading = false
+        selectedAnime = nil
+        episodeResults = []
+        suggestedEpisodeIDs = []
+        message = animeResults.isEmpty ? nil : "选择作品后，再选择对应集数。"
+        requestResultFocus(previousAnimeFocusID ?? animeResults.first.map { "anime:\($0.id)" })
+    }
+
+    @MainActor
+    private func requestResultFocus(_ id: String?) {
+        #if os(tvOS)
+        guard let id else { return }
+        pendingResultFocusID = id
+        resultFocusRequestVersion += 1
+        #endif
     }
 
     @MainActor

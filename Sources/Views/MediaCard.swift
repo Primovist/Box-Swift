@@ -5,6 +5,7 @@ import UIKit
 struct MediaArtwork: View {
     let item: MediaItem
     var wide = false
+    var showsTitle = true
 
     private var colors: [Color] {
         let choices: [[Color]] = [
@@ -37,23 +38,25 @@ struct MediaArtwork: View {
                 }
 
                 LinearGradient(colors: [.clear, .black.opacity(0.82)], startPoint: .center, endPoint: .bottom)
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(item.category)
-                        .font(.system(size: wide ? 12 : 10, weight: .bold, design: .rounded))
-                        .tracking(1.5)
-                        .foregroundStyle(.white.opacity(0.75))
-                    Text(item.title)
-                        .font(.system(size: wide ? 30 : 17, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.8)
-                    if wide && !item.subtitle.isEmpty {
-                        Text(item.subtitle)
-                            .font(.system(size: 14, weight: .medium))
+                if showsTitle {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(item.category)
+                            .font(.system(size: TVBoxTypography.readable(wide ? 12 : 10, minimum: 23), weight: .bold, design: .rounded))
+                            .tracking(1.5)
                             .foregroundStyle(.white.opacity(0.75))
+                        Text(item.title)
+                            .font(.system(size: TVBoxTypography.readable(wide ? 30 : 17), weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .lineLimit(2)
+                            .minimumScaleFactor(TVBoxTypography.minimumScaleFactor)
+                        if wide && !item.subtitle.isEmpty {
+                            Text(item.subtitle)
+                                .font(.system(size: TVBoxTypography.readable(14, minimum: 23), weight: .medium))
+                                .foregroundStyle(.white.opacity(0.75))
+                        }
                     }
+                    .padding(wide ? 26 : 14)
                 }
-                .padding(wide ? 26 : 14)
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
             .clipShape(RoundedRectangle(cornerRadius: wide ? 24 : 17, style: .continuous))
@@ -62,7 +65,7 @@ struct MediaArtwork: View {
                     .strokeBorder(.white.opacity(0.10), lineWidth: 1)
             }
         }
-        .accessibilityLabel("\(item.title)，\(item.category)")
+        .accessibilityLabel(showsTitle ? "\(item.title)，\(item.category)" : "\(item.category)封面图片")
     }
 }
 
@@ -208,20 +211,20 @@ struct MediaCard: View {
                 MediaArtwork(item: item)
                     .aspectRatio(0.72, contentMode: .fit)
                 Text(item.title)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .font(.system(size: TVBoxTypography.readable(15), weight: .semibold, design: .rounded))
                     .foregroundStyle(Color.primary)
                     .lineLimit(1)
                 let metadata = item.subtitle.isEmpty ? item.category : item.subtitle
                 Text(metadata.isEmpty ? " " : metadata)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: TVBoxTypography.readable(12, minimum: 23), weight: .medium))
                     .foregroundStyle(Color.tvboxMuted)
                     .lineLimit(1)
-                    .frame(height: 15, alignment: .topLeading)
+                    .frame(minHeight: TVBoxTypography.readable(15, minimum: 25), alignment: .topLeading)
                     .accessibilityHidden(metadata.isEmpty)
             }
             .contentShape(RoundedRectangle(cornerRadius: 18))
         }
-        .buttonStyle(FocusAwareButtonStyle())
+        .platformFocusableButtonStyle()
         .accessibilityHint("打开详情和选集")
     }
 }

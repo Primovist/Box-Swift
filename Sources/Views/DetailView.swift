@@ -8,6 +8,7 @@ struct DetailView: View {
     @State private var playbackRequest: PlaybackRequest?
     @State private var isResolving = false
     @State private var errorMessage: String?
+    @State private var isShowingFullDetails = false
 
     let item: MediaItem
 
@@ -17,31 +18,51 @@ struct DetailView: View {
     var body: some View {
         GeometryReader { geometry in
             let wide = geometry.size.width >= geometry.size.height
+            #if os(iOS)
+            let compactLandscape = wide && geometry.size.height < 500
+            #else
+            let compactLandscape = false
+            #endif
             ZStack {
                 ScreenBackground()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: wide ? 28 : 22) {
-                        if catalog.alternateSources(for: media).count > 1 {
-                            sourcePicker
+                if compactLandscape {
+                    compactLandscapeLayout(size: geometry.size)
+                } else {
+                    VStack(spacing: wide ? 20 : 14) {
+                        VStack(alignment: .leading, spacing: wide ? 16 : 12) {
+                            if wide {
+                                HStack(spacing: 24) {
+                                    if catalog.alternateSources(for: media).count > 1 { sourcePicker }
+                                    if supportedParsers.count > 1 { parserPicker }
+                                }
+                            } else {
+                                if catalog.alternateSources(for: media).count > 1 { sourcePicker }
+                                if supportedParsers.count > 1 { parserPicker }
+                            }
+                            if wide {
+                                wideOverview(availableHeight: geometry.size.height)
+                            } else {
+                                portraitOverview
+                            }
                         }
-                        if supportedParsers.count > 1 {
-                            parserPicker
-                        }
-                        if wide {
-                            wideOverview
-                        } else {
-                            portraitOverview
-                        }
+                        .frame(maxWidth: 1350, alignment: .leading)
+                        .padding(.horizontal, wide ? 72 : 20)
+                        .padding(.top, wide ? 25 : 16)
+                        .frame(maxWidth: .infinity, alignment: .top)
+
+                        Rectangle()
+                            .fill(Color.primary.opacity(0.10))
+                            .frame(height: 1)
+
                         playlist(wide: wide)
+                            .frame(maxWidth: 1350, maxHeight: .infinity, alignment: .topLeading)
+                            .padding(.horizontal, wide ? 72 : 20)
+                            .padding(.bottom, wide ? 24 : 14)
                     }
-                    .frame(maxWidth: 1350, alignment: .leading)
-                    .padding(.horizontal, wide ? 72 : 20)
-                    .padding(.top, wide ? 25 : 16)
-                    .padding(.bottom, 48)
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }
             }
-            .navigationTitle(media.title)
+            .navigationTitle("")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -59,6 +80,9 @@ struct DetailView: View {
         .fullScreenCover(item: $playbackRequest) { request in
             PlayerScreen(request: request)
         }
+        .sheet(isPresented: $isShowingFullDetails) {
+            fullDetailsSheet
+        }
         .alert("无法开始播放", isPresented: Binding(
             get: { errorMessage != nil },
             set: { if !$0 { errorMessage = nil } }
@@ -67,6 +91,31 @@ struct DetailView: View {
         } message: {
             Text(errorMessage ?? "")
         }
+    }
+
+    private func compactLandscapeLayout(size: CGSize) -> some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 10) {
+                if catalog.alternateSources(for: media).count > 1 { sourcePicker }
+                if supportedParsers.count > 1 { parserPicker }
+                wideOverview(availableHeight: size.height)
+                Spacer(minLength: 0)
+            }
+            .frame(width: min(max(size.width * 0.38, 220), 340), alignment: .topLeading)
+
+            Rectangle()
+                .fill(Color.primary.opacity(0.10))
+                .frame(width: 1)
+
+            playlist(wide: false)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(.trailing, 16)
+                .padding(.bottom, 10)
+        }
+        .padding(.leading, 20)
+        .padding(.top, 10)
+        .frame(maxWidth: 1000, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private var sourcePicker: some View {
@@ -103,83 +152,100 @@ struct DetailView: View {
         .pickerStyle(.menu)
     }
 
-    private var wideOverview: some View {
-        HStack(alignment: .top, spacing: 36) {
-            MediaArtwork(item: media, wide: true)
+    private func wideOverview(availableHeight: CGFloat) -> some View {
+        #if os(tvOS)
+        let compact = false
+        let posterWidth = min(
+            TVBoxTypography.readable(270, minimum: 360),
+            max(220, (availableHeight - 160) * 0.74)
+        )
+        #else
+        let compact = availableHeight < 900
+        let posterWidth = compact
+            ? max(90, min(150, (availableHeight - 260) * 0.74))
+            : min(270, max(120, (availableHeight - 160) * 0.74))
+        #endif
+        return HStack(alignment: .top, spacing: compact ? 18 : 36) {
+            MediaArtwork(item: media, wide: true, showsTitle: false)
                 .aspectRatio(0.74, contentMode: .fit)
-                .frame(width: 270)
-            overviewText(isWide: true)
+                .frame(width: posterWidth)
+            overviewText(compact: compact)
         }
     }
 
     private var portraitOverview: some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack(alignment: .top, spacing: 18) {
-                MediaArtwork(item: media, wide: true)
+                MediaArtwork(item: media, wide: true, showsTitle: false)
                     .aspectRatio(0.74, contentMode: .fit)
                     .frame(width: 122)
                 VStack(alignment: .leading, spacing: 12) {
                     SectionEyebrow(text: media.category.isEmpty ? media.sourceName : media.category)
                     Text(media.title)
-                        .font(.system(size: 23, weight: .bold, design: .rounded))
+                        .font(.system(size: TVBoxTypography.readable(23), weight: .bold, design: .rounded))
                         .foregroundStyle(Color.primary)
+                        .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                     if !media.subtitle.isEmpty {
-                        Text(media.subtitle).font(.system(size: 13, weight: .medium)).foregroundStyle(Color.tvboxCyan)
+                        Text(media.subtitle).font(.system(size: TVBoxTypography.readable(13, minimum: 23), weight: .medium)).foregroundStyle(Color.tvboxCyan)
                     }
-                    favoriteButton
+                    HStack(spacing: 10) {
+                        favoriteButton
+                        if hasAdditionalDetails { moreDetailsButton }
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             if !media.summary.isEmpty {
-                Text(media.summary)
-                    .font(.system(size: 14))
-                    .foregroundStyle(Color.primary.opacity(0.72))
-                    .lineSpacing(4)
-                    .fixedSize(horizontal: false, vertical: true)
+                    Text(media.summary)
+                        .font(.system(size: TVBoxTypography.readable(14)))
+                        .foregroundStyle(Color.primary.opacity(0.72))
+                        .lineSpacing(4)
+                        .lineLimit(3)
             }
-            metadata(compact: true)
+            metadata
         }
     }
 
-    private func overviewText(isWide: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            SectionEyebrow(text: media.category.isEmpty ? media.sourceName : media.category)
-            Text(media.title)
-                .font(.system(size: 36, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.primary)
-                .fixedSize(horizontal: false, vertical: true)
-            if !media.subtitle.isEmpty {
-                Text(media.subtitle).font(.system(size: 16, weight: .medium)).foregroundStyle(Color.tvboxCyan)
+    private func overviewText(compact: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: compact ? 8 : 16) {
+            if !compact {
+                SectionEyebrow(text: media.category.isEmpty ? media.sourceName : media.category)
             }
-            metadata(compact: false)
+            Text(media.title)
+                .font(.system(size: TVBoxTypography.readable(compact ? 23 : 36), weight: .bold, design: .rounded))
+                .foregroundStyle(Color.primary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            if !compact, !media.subtitle.isEmpty {
+                Text(media.subtitle).font(.system(size: TVBoxTypography.readable(16, minimum: 23), weight: .medium)).foregroundStyle(Color.tvboxCyan)
+            }
+            metadata
             if !media.summary.isEmpty {
                 Text(media.summary)
-                    .font(.system(size: 15))
+                    .font(.system(size: TVBoxTypography.readable(compact ? 13 : 15)))
                     .foregroundStyle(Color.primary.opacity(0.72))
                     .lineSpacing(5)
-                    .lineLimit(5)
+                    .lineLimit(compact ? 2 : 3)
             }
-            favoriteButton
+            HStack(spacing: 10) {
+                favoriteButton
+                if hasAdditionalDetails { moreDetailsButton }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 8)
     }
 
-    private func metadata(compact: Bool) -> some View {
-        let values = [media.year, media.area, media.language, media.actor.isEmpty ? "" : "主演：\(media.actor)", media.director.isEmpty ? "" : "导演：\(media.director)"]
-            .filter { !$0.isEmpty }
+    private var metadata: some View {
+        let values = detailMetadata
         return Group {
             if !values.isEmpty {
-                if compact {
-                    Text(values.joined(separator: " · "))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color.tvboxMuted)
-                        .lineSpacing(4)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    FlowMetadata(values: values)
-                }
+                Text(values.joined(separator: " · "))
+                    .font(.system(size: TVBoxTypography.readable(12, minimum: 23), weight: .medium))
+                    .foregroundStyle(Color.tvboxMuted)
+                    .lineSpacing(4)
+                    .lineLimit(2)
             }
         }
     }
@@ -193,19 +259,79 @@ struct DetailView: View {
         .buttonStyle(.bordered)
     }
 
-    private func playlist(wide: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 15) {
-            SectionEyebrow(text: "播放列表")
-            HStack(alignment: .lastTextBaseline) {
-                Text("选择线路与剧集")
-                    .font(.system(size: wide ? 24 : 20, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color.primary)
-                Spacer()
-                if !media.remarks.isEmpty {
-                    Text(media.remarks).font(.system(size: 12, weight: .medium)).foregroundStyle(Color.tvboxMuted)
+    private var moreDetailsButton: some View {
+        Button("更多信息") { isShowingFullDetails = true }
+            .buttonStyle(.bordered)
+    }
+
+    private var detailMetadata: [String] {
+        [media.year, media.area, media.language, media.actor.isEmpty ? "" : "主演：\(media.actor)", media.director.isEmpty ? "" : "导演：\(media.director)"]
+            .filter { !$0.isEmpty }
+    }
+
+    private var hasAdditionalDetails: Bool {
+        !media.category.isEmpty || !media.sourceName.isEmpty || !media.subtitle.isEmpty
+            || !media.summary.isEmpty || !detailMetadata.isEmpty
+    }
+
+    private var fullDetailsSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    SectionEyebrow(text: media.category.isEmpty ? media.sourceName : media.category)
+                    Text(media.title)
+                        .font(.system(size: TVBoxTypography.readable(28), weight: .bold, design: .rounded))
+                        .foregroundStyle(Color.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if !media.subtitle.isEmpty {
+                        Text(media.subtitle)
+                            .font(.system(size: TVBoxTypography.readable(16), weight: .medium))
+                            .foregroundStyle(Color.tvboxCyan)
+                    }
+                    if !detailMetadata.isEmpty {
+                        Text(detailMetadata.joined(separator: " · "))
+                            .font(.system(size: TVBoxTypography.readable(14), weight: .medium))
+                            .foregroundStyle(Color.tvboxMuted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !media.summary.isEmpty {
+                        Text(media.summary)
+                            .font(.system(size: TVBoxTypography.readable(16)))
+                            .foregroundStyle(Color.primary.opacity(0.78))
+                            .lineSpacing(5)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: 900, alignment: .leading)
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .top)
+            }
+            .navigationTitle("详细信息")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            .presentationDetents([.medium, .large])
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { isShowingFullDetails = false }
                 }
             }
+        }
+    }
 
+    private func playlist(wide: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("选集")
+                    .font(.system(size: TVBoxTypography.readable(wide ? 24 : 20), weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.primary)
+                Spacer(minLength: 12)
+                if let line = selectedLine {
+                    Text("\(line.episodes.count) 集")
+                        .font(.system(size: TVBoxTypography.readable(14), weight: .medium))
+                        .foregroundStyle(Color.tvboxMuted)
+                }
+            }
             if media.lines.count > 1 {
                 Picker("线路", selection: $selectedLineID) {
                     ForEach(media.lines) { line in
@@ -213,43 +339,61 @@ struct DetailView: View {
                     }
                 }
                 .pickerStyle(.menu)
+                .disabled(isResolving)
             }
 
             if let line = selectedLine, !line.episodes.isEmpty {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: wide ? 3 : 1), alignment: .leading, spacing: 11) {
-                    ForEach(line.episodes) { episode in
-                        Button { play(episode) } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: "play.circle.fill")
-                                    .font(.system(size: 21))
-                                    .foregroundStyle(Color.tvboxAccent)
-                                Text(episode.title)
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundStyle(Color.primary)
-                                    .lineLimit(1)
-                                Spacer(minLength: 3)
-                                if isResolving { ProgressView().tint(.white) }
+                ScrollView(.vertical) {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: wide ? 3 : 1), alignment: .leading, spacing: 14) {
+                        ForEach(line.episodes) { episode in
+                            Button { play(episode) } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "play.circle.fill")
+                                        .font(.system(size: TVBoxTypography.readable(21)))
+                                        .foregroundStyle(Color.tvboxAccent)
+                                    Text(episode.title)
+                                        .font(.system(size: TVBoxTypography.readable(14), weight: .semibold))
+                                        .foregroundStyle(Color.primary)
+                                        .lineLimit(2)
+                                        .multilineTextAlignment(.leading)
+                                    Spacer(minLength: 3)
+                                    if isResolving { ProgressView().tint(Color.tvboxAccent) }
+                                }
+                                .padding(.horizontal, 18)
+                                .frame(maxWidth: .infinity, minHeight: TVBoxTypography.readable(64, minimum: 88), alignment: .leading)
+                                .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
                             }
-                            .padding(14)
-                            .frame(maxWidth: .infinity, minHeight: 54, alignment: .leading)
-                            .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.white.opacity(0.08), lineWidth: 1))
+                            .platformFocusableButtonStyle()
+                            .accessibilityLabel(episode.title)
+                            .disabled(isResolving)
                         }
-                        .buttonStyle(FocusAwareButtonStyle())
-                        .disabled(isResolving)
                     }
+                    .padding(.horizontal, episodeFocusInset)
+                    .padding(.vertical, episodeFocusInset)
                 }
+                .scrollBounceBehavior(.basedOnSize)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 #if os(tvOS)
                 .focusSection()
                 #endif
             } else {
                 Text("站点尚未返回播放线路。")
-                    .font(.system(size: 13))
+                    .font(.system(size: TVBoxTypography.readable(13)))
                     .foregroundStyle(Color.tvboxMuted)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .padding(.vertical, 18)
             }
         }
-        .padding(.bottom, 30)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var episodeFocusInset: CGFloat {
+        #if os(tvOS)
+        28
+        #else
+        8
+        #endif
     }
 
     private func play(_ episode: Episode) {
@@ -282,25 +426,5 @@ struct DetailView: View {
             preferredEpisodeID = nil
             isResolving = false
         }
-    }
-}
-
-private struct FlowMetadata: View {
-    let values: [String]
-
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) { ForEach(values.indices, id: \.self) { metadataChip(values[$0]) } }
-            VStack(alignment: .leading, spacing: 8) { ForEach(values.indices, id: \.self) { metadataChip(values[$0]) } }
-        }
-    }
-
-    private func metadataChip(_ value: String) -> some View {
-        Text(value)
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(Color.tvboxMuted)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(.white.opacity(0.05), in: Capsule())
     }
 }

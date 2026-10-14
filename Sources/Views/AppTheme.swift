@@ -1,6 +1,24 @@
 import SwiftUI
 import UIKit
 
+enum TVBoxTypography {
+    static func readable(_ size: CGFloat, minimum: CGFloat = 29) -> CGFloat {
+        #if os(tvOS)
+        max(size, minimum)
+        #else
+        size
+        #endif
+    }
+
+    static var minimumScaleFactor: CGFloat {
+        #if os(tvOS)
+        1
+        #else
+        0.8
+        #endif
+    }
+}
+
 private enum TVBoxPalette {
     #if os(iOS)
     static let background = Color(uiColor: .systemBackground)
@@ -37,7 +55,7 @@ struct SectionEyebrow: View {
 
     var body: some View {
         Text(text.uppercased())
-            .font(.system(size: 11, weight: .bold, design: .rounded))
+            .font(.system(size: TVBoxTypography.readable(11, minimum: 23), weight: .bold, design: .rounded))
             .tracking(2.2)
             .foregroundStyle(TVBoxPalette.cyan)
     }
@@ -45,13 +63,34 @@ struct SectionEyebrow: View {
 
 struct FocusAwareButtonStyle: ButtonStyle {
     @Environment(\.isFocused) private var isFocused
+    @Environment(\.colorScheme) private var colorScheme
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(isFocused ? .white.opacity(0.9) : .clear, lineWidth: 2).padding(-2))
-            .scaleEffect(configuration.isPressed ? 0.97 : (isFocused ? 1.035 : 1))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(isFocused ? (colorScheme == .dark ? Color.white : Color.black) : .clear, lineWidth: 3)
+                    .padding(-3)
+            }
+            .scaleEffect(configuration.isPressed ? 0.97 : (isFocused ? 1.06 : 1))
             .animation(.easeOut(duration: 0.13), value: configuration.isPressed)
             .animation(.easeOut(duration: 0.13), value: isFocused)
+    }
+}
+
+struct PlatformFocusableButtonStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        #if os(tvOS)
+        content.buttonStyle(.card)
+        #else
+        content.buttonStyle(FocusAwareButtonStyle())
+        #endif
+    }
+}
+
+extension View {
+    func platformFocusableButtonStyle() -> some View {
+        modifier(PlatformFocusableButtonStyle())
     }
 }
 

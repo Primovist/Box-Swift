@@ -237,7 +237,7 @@ struct HomeView: View {
             if wide, catalog.selectedCategoryID.isEmpty, searchText.isEmpty,
                let featured = items(for: selectedSection).first {
                 NavigationLink(value: featured) { featuredCard(featured, wide: wide) }
-                    .buttonStyle(FocusAwareButtonStyle())
+                    .platformFocusableButtonStyle()
             }
         }
     }
@@ -268,7 +268,7 @@ struct HomeView: View {
         }
         if let message = catalog.loadMessage {
             Text(message)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: TVBoxTypography.readable(12, minimum: 23), weight: .medium))
                 .foregroundStyle(Color.tvboxMuted)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -294,13 +294,13 @@ struct HomeView: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 13, style: .continuous)
                     .fill(LinearGradient(colors: [Color.tvboxAccent, Color(red: 0.78, green: 0.12, blue: 0.30)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .frame(width: 46, height: 46)
+                    .frame(width: TVBoxTypography.readable(46, minimum: 64), height: TVBoxTypography.readable(46, minimum: 64))
                 Image(systemName: "play.rectangle.fill")
-                    .font(.system(size: 22, weight: .bold))
+                    .font(.system(size: TVBoxTypography.readable(22, minimum: 30), weight: .bold))
                     .foregroundStyle(.white)
             }
             Text(catalog.selectedSite?.name ?? "选择片源")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .font(.system(size: TVBoxTypography.readable(18), weight: .bold, design: .rounded))
                 .foregroundStyle(Color.primary)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -359,22 +359,26 @@ struct HomeView: View {
     }
 
     private func contentGrid(_ values: [MediaItem], wide: Bool, titleOverride: String? = nil, section: HomeSection) -> some View {
+        #if os(tvOS)
+        let columnCount = wide ? 4 : 2
+        #else
         let columnCount = wide ? 5 : 2
-        let columns = Array(repeating: GridItem(.flexible(), spacing: wide ? 22 : 13), count: columnCount)
+        #endif
+        let columns = Array(repeating: GridItem(.flexible(), spacing: wide ? 28 : 13), count: columnCount)
         return VStack(alignment: .leading, spacing: 15) {
             HStack(alignment: .lastTextBaseline) {
                 VStack(alignment: .leading, spacing: 5) {
                     SectionEyebrow(text: titleOverride ?? (catalog.isSearchingAllSites ? "全站搜索" : (catalog.selectedCategory?.name ?? "影视内容")))
                     Text(titleOverride ?? (catalog.isSearching ? "搜索结果" : "正在探索"))
-                        .font(.system(size: wide ? 26 : 22, weight: .bold, design: .rounded))
+                        .font(.system(size: TVBoxTypography.readable(wide ? 26 : 22), weight: .bold, design: .rounded))
                         .foregroundStyle(Color.primary)
                 }
                 Spacer()
                 Text("\(values.count) 个条目")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: TVBoxTypography.readable(12, minimum: 23), weight: .medium))
                     .foregroundStyle(Color.tvboxMuted)
             }
-            LazyVGrid(columns: columns, alignment: .leading, spacing: wide ? 24 : 18) {
+            LazyVGrid(columns: columns, alignment: .leading, spacing: wide ? 36 : 18) {
                 ForEach(values) { item in
                         MediaCard(item: item)
                             .onAppear {
@@ -392,24 +396,29 @@ struct HomeView: View {
     }
 
     private func savedItemsSection(_ title: String, items: [MediaItem], wide: Bool, history: Bool = false) -> some View {
-        let columns = Array(repeating: GridItem(.flexible(), spacing: wide ? 22 : 13), count: wide ? 5 : 2)
+        #if os(tvOS)
+        let columnCount = wide ? 4 : 2
+        #else
+        let columnCount = wide ? 5 : 2
+        #endif
+        let columns = Array(repeating: GridItem(.flexible(), spacing: wide ? 28 : 13), count: columnCount)
         return VStack(alignment: .leading, spacing: 14) {
             HStack {
                 SectionEyebrow(text: title)
                 Spacer()
                 if history {
                     Button("清空") { catalog.clearHistory() }
-                        .font(.system(size: 12, weight: .medium))
-                        .buttonStyle(FocusAwareButtonStyle())
+                        .font(.system(size: TVBoxTypography.readable(12, minimum: 23), weight: .medium))
+                        .platformFocusableButtonStyle()
                 }
                 Text("\(items.count) 个条目")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: TVBoxTypography.readable(12, minimum: 23), weight: .medium))
                     .foregroundStyle(Color.tvboxMuted)
             }
-            LazyVGrid(columns: columns, alignment: .leading, spacing: wide ? 24 : 18) {
+            LazyVGrid(columns: columns, alignment: .leading, spacing: wide ? 36 : 18) {
                 if items.isEmpty {
                     Text(history ? "还没有观看记录。" : "还没有收藏内容。")
-                        .font(.system(size: 13))
+                        .font(.system(size: TVBoxTypography.readable(13)))
                         .foregroundStyle(Color.tvboxMuted)
                         .frame(maxWidth: .infinity, minHeight: 74, alignment: .leading)
                 } else {
@@ -439,11 +448,11 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: 13) {
                 SectionEyebrow(text: item.category.isEmpty ? "推荐" : item.category)
                 Text(item.title)
-                    .font(.system(size: 36, weight: .bold, design: .rounded))
+                    .font(.system(size: TVBoxTypography.readable(36), weight: .bold, design: .rounded))
                     .foregroundStyle(Color.primary)
                     .lineLimit(2)
                 Text(item.summary.isEmpty ? item.subtitle : item.summary)
-                    .font(.system(size: 14))
+                    .font(.system(size: TVBoxTypography.readable(14)))
                     .foregroundStyle(Color.primary.opacity(0.72))
                     .lineLimit(3)
                 HStack(spacing: 12) {
@@ -451,10 +460,10 @@ struct HomeView: View {
                     if !item.remarks.isEmpty { Label(item.remarks, systemImage: "sparkles") }
                     if !item.lines.isEmpty { Label("\(item.lines.count) 条线路", systemImage: "rectangle.stack") }
                 }
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: TVBoxTypography.readable(12, minimum: 23), weight: .medium))
                 .foregroundStyle(Color.tvboxMuted)
                 Label("查看详情", systemImage: "arrow.right")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: TVBoxTypography.readable(13), weight: .bold))
                     .foregroundStyle(Color.primary)
                     .padding(.horizontal, 17)
                     .padding(.vertical, 11)
@@ -476,9 +485,9 @@ struct HomeView: View {
         } else if catalog.liveGroups.isEmpty {
             VStack(spacing: 12) {
                 Image(systemName: "antenna.radiowaves.left.and.right").font(.system(size: 32)).foregroundStyle(Color.tvboxCyan)
-                Text("tvbox.json 没有可用的直播频道").font(.system(size: 18, weight: .bold)).foregroundStyle(Color.primary)
+                Text("tvbox.json 没有可用的直播频道").font(.system(size: TVBoxTypography.readable(18), weight: .bold)).foregroundStyle(Color.primary)
                 Text("支持配置内 lives 分组，或在 lives[].url 中提供 TXT/M3U 地址。")
-                    .font(.system(size: 13)).foregroundStyle(Color.tvboxMuted).multilineTextAlignment(.center)
+                    .font(.system(size: TVBoxTypography.readable(13))).foregroundStyle(Color.tvboxMuted).multilineTextAlignment(.center)
             }
             .frame(maxWidth: .infinity, minHeight: 220)
         } else {
@@ -487,12 +496,12 @@ struct HomeView: View {
                     if !group.password.isEmpty && !unlockedLiveGroups.contains(group.id) {
                         Button { lockedGroup = group } label: {
                             Label("\(group.name) · 需要密码", systemImage: "lock.fill")
-                                .font(.system(size: 15, weight: .semibold))
+                                .font(.system(size: TVBoxTypography.readable(15), weight: .semibold))
                                 .foregroundStyle(Color.primary)
                                 .frame(maxWidth: .infinity, minHeight: 64)
                                 .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                         }
-                        .buttonStyle(FocusAwareButtonStyle())
+                        .platformFocusableButtonStyle()
                     } else {
                         VStack(alignment: .leading, spacing: 13) {
                             SectionEyebrow(text: group.name)
@@ -508,10 +517,11 @@ struct HomeView: View {
         let channels = group.channels
         let columnCount = wide ? 4 : 2
         let rowCount = (channels.count + columnCount - 1) / columnCount
-        let gridHeight = CGFloat(rowCount * 64 + max(0, rowCount - 1) * 12)
+        let cellHeight = TVBoxTypography.readable(64, minimum: 112)
+        let gridHeight = CGFloat(rowCount) * cellHeight + CGFloat(max(0, rowCount - 1) * 16)
         let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: columnCount)
 
-        return LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
+        return LazyVGrid(columns: columns, alignment: .leading, spacing: 16) {
             ForEach(channels) { channel in
                 liveChannelControl(channel, group: group)
             }
@@ -525,9 +535,9 @@ struct HomeView: View {
         } label: {
             liveChannelLabel(channel)
         }
-        .buttonStyle(FocusAwareButtonStyle())
+        .platformFocusableButtonStyle()
         .frame(maxWidth: .infinity)
-        .frame(height: 64)
+        .frame(height: TVBoxTypography.readable(64, minimum: 112))
         .accessibilityHint("立即播放")
     }
 
@@ -535,23 +545,23 @@ struct HomeView: View {
         HStack(spacing: 12) {
             if let logoURL = channel.logoURL {
                 CachedArtworkImage(url: logoURL, contentMode: .fit)
-                .frame(width: 34, height: 34)
+                .frame(width: TVBoxTypography.readable(34, minimum: 52), height: TVBoxTypography.readable(34, minimum: 52))
                 .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             } else {
                 Image(systemName: "dot.radiowaves.left.and.right").foregroundStyle(Color.tvboxCyan)
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text(channel.name)
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.system(size: TVBoxTypography.readable(14), weight: .bold))
                     .foregroundStyle(Color.primary)
                     .lineLimit(1)
-                Text("\(channel.sources.count) 条线路").font(.system(size: 11)).foregroundStyle(Color.tvboxMuted)
+                Text("\(channel.sources.count) 条线路").font(.system(size: TVBoxTypography.readable(11, minimum: 23))).foregroundStyle(Color.tvboxMuted)
             }
             Spacer(minLength: 0)
-            Image(systemName: "play.fill").font(.system(size: 11)).foregroundStyle(Color.tvboxAccent)
+            Image(systemName: "play.fill").font(.system(size: TVBoxTypography.readable(11, minimum: 20))).foregroundStyle(Color.tvboxAccent)
         }
-        .padding(15)
-        .frame(maxWidth: .infinity, minHeight: 64, maxHeight: 64, alignment: .leading)
+        .padding(TVBoxTypography.readable(15, minimum: 22))
+        .frame(maxWidth: .infinity, minHeight: TVBoxTypography.readable(64, minimum: 112), maxHeight: TVBoxTypography.readable(64, minimum: 112), alignment: .leading)
         .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
