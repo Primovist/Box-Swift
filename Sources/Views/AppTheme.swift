@@ -99,5 +99,6 @@ extension Color {
     static var tvboxSurface: Color { TVBoxPalette.surface }
     static var tvboxMuted: Color { TVBoxPalette.muted }
     static var tvboxAccent: Color { TVBoxPalette.accent }
+    static var tvboxSelection: Color { Color(red: 0.16, green: 0.30, blue: 0.55) }
     static var tvboxCyan: Color { TVBoxPalette.cyan }
 }

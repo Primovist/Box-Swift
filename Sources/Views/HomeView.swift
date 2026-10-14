@@ -115,18 +115,13 @@ struct HomeView: View {
     private func navigationTab(_ tab: HomeSection, wide: Bool) -> some View {
         NavigationStack {
             VStack(spacing: 0) {
-                #if os(tvOS)
-                header(wide: wide)
-                    .frame(maxWidth: 1500, alignment: .leading)
-                    .padding(.horizontal, wide ? 72 : 20)
-                    .padding(.top, wide ? 28 : 18)
-                    .padding(.bottom, 8)
-                    .frame(maxWidth: .infinity)
-                #endif
-
                 if tab == .search {
                     selectedSectionContent(for: tab, wide: wide)
+                        #if os(tvOS)
+                        .navigationTitle("")
+                        #else
                         .navigationTitle("搜索")
+                        #endif
                         .searchable(text: $searchText, prompt: "搜索片名")
                         #if os(iOS)
                         .searchFocused($isSearchFocused)
@@ -138,7 +133,11 @@ struct HomeView: View {
                         .onSubmit(of: .search, submitSearch)
                 } else if tab == .settings {
                     selectedSectionContent(for: tab, wide: wide)
+                        #if os(tvOS)
+                        .navigationTitle("")
+                        #else
                         .navigationTitle("设置")
+                        #endif
                 } else {
                     selectedSectionContent(for: tab, wide: wide)
                 }
@@ -146,10 +145,18 @@ struct HomeView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .navigationDestination(for: MediaItem.self) { item in
                     DetailView(item: item)
+                        #if os(tvOS)
+                        .toolbar(.hidden, for: .navigationBar)
+                        #else
                         .toolbar(.visible, for: .navigationBar)
+                        #endif
                         .toolbar(.hidden, for: .tabBar)
                 }
+                #if os(tvOS)
+                .toolbar(tab == .search ? .visible : .hidden, for: .navigationBar)
+                #else
                 .toolbar(tab == .search || tab == .settings ? .visible : .hidden, for: .navigationBar)
+                #endif
         }
         .tabItem { Label(tab.rawValue, systemImage: sectionSymbol(for: tab)) }
         .tag(tab)
@@ -179,7 +186,7 @@ struct HomeView: View {
             }
             .frame(maxWidth: 1500)
             .padding(.horizontal, wide ? 72 : 20)
-            .padding(.top, wide ? 28 : 18)
+            .padding(.top, wide ? 10 : 18)
             .frame(maxWidth: .infinity)
         }
         .id(selectedSection)
@@ -330,16 +337,32 @@ struct HomeView: View {
                 Text(category.name).tag(category.id)
             }
         } label: {
-            Label(catalog.selectedCategory?.name ?? "最近更新", systemImage: "line.3.horizontal.decrease.circle")
+            HStack(spacing: 12) {
+                Image(systemName: "line.3.horizontal.decrease.circle")
+                    .foregroundStyle(Color.tvboxAccent)
+                Text(catalog.selectedCategory?.name ?? "最近更新")
+                    .fontWeight(.semibold)
+                Spacer(minLength: 12)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: TVBoxTypography.readable(12, minimum: 22), weight: .bold))
+                    .foregroundStyle(Color.tvboxMuted)
+            }
+            .frame(maxWidth: .infinity, minHeight: TVBoxTypography.readable(52, minimum: 76), alignment: .leading)
+            .padding(.horizontal, 18)
+            .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .pickerStyle(.menu)
+        #if os(tvOS)
+        .focusSection()
+        #endif
     }
 
     private func filterPicker(category: TVBoxCategory) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(category.filters) { filter in
-                    Picker(filter.name, selection: Binding(
+                    Picker(selection: Binding(
                         get: { catalog.selectedFilterValue(for: filter.key) },
                         set: {
                             searchText = ""
@@ -351,9 +374,29 @@ struct HomeView: View {
                             Text(option.title).tag(option.value)
                         }
                     }
+                    label: {
+                        HStack(spacing: 10) {
+                            Text(filter.name).foregroundStyle(Color.tvboxMuted)
+                            Text(catalog.selectedFilterValue(for: filter.key).isEmpty
+                                 ? "全部"
+                                 : (filter.options.first(where: { $0.value == catalog.selectedFilterValue(for: filter.key) })?.title ?? "全部"))
+                                .fontWeight(.semibold)
+                                .foregroundStyle(Color.primary)
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: TVBoxTypography.readable(10, minimum: 20), weight: .bold))
+                                .foregroundStyle(Color.tvboxMuted)
+                        }
+                        .frame(minHeight: TVBoxTypography.readable(44, minimum: 68))
+                        .padding(.horizontal, 16)
+                        .background(Color.tvboxSurface, in: Capsule())
+                        .contentShape(Capsule())
+                    }
                     .pickerStyle(.menu)
                 }
             }
+            #if os(tvOS)
+            .focusSection()
+            #endif
         }
         .scrollClipDisabled()
     }
@@ -464,10 +507,10 @@ struct HomeView: View {
                 .foregroundStyle(Color.tvboxMuted)
                 Label("查看详情", systemImage: "arrow.right")
                     .font(.system(size: TVBoxTypography.readable(13), weight: .bold))
-                    .foregroundStyle(Color.primary)
+                    .foregroundStyle(Color.white)
                     .padding(.horizontal, 17)
                     .padding(.vertical, 11)
-                    .background(Color.tvboxAccent, in: Capsule())
+                    .background(Color.tvboxSelection, in: Capsule())
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.trailing, 25)

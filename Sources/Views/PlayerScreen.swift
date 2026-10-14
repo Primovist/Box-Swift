@@ -1212,6 +1212,7 @@ struct PlayerScreen: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .focusable()
                     .focused($playerSurfaceFocused)
+                    .focusEffectDisabled()
                     .accessibilityLabel("显示播放控件")
                     .zIndex(2)
                     .onMoveCommand { _ in revealControls() }
@@ -1435,6 +1436,7 @@ struct PlayerScreen: View {
             revealControls()
         }
         #endif
+        .preferredColorScheme(.dark)
     }
 
     #if os(iOS)
@@ -2259,14 +2261,14 @@ struct PlayerScreen: View {
                                     .padding(.horizontal, TVBoxTypography.readable(13, minimum: 20))
                                     .padding(.vertical, TVBoxTypography.readable(8, minimum: 14))
                                     .foregroundStyle(isSelected ? Color.white : Color(uiColor: .label))
-                                    .background(isSelected ? Color.tvboxAccent : Color.tvboxSurface, in: Capsule())
+                                    .background(isSelected ? Color.tvboxSelection : Color.tvboxSurface, in: Capsule())
                             }
-                            .platformFocusableButtonStyle()
+                            .playerControlButtonStyle(isAccent: isSelected)
                             .accessibilityAddTraits(isSelected ? .isSelected : [])
                             .id(date)
                         }
                     }
-                    .padding(.vertical, 24)
+                    .padding(.vertical, TVBoxTypography.readable(10, minimum: 22))
                 }
                 .onAppear {
                     focusLiveGuideDateForPlayback()
@@ -2292,11 +2294,10 @@ struct PlayerScreen: View {
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(spacing: 0) {
+                        LazyVStack(spacing: TVBoxTypography.readable(7, minimum: 12)) {
                             ForEach(livePrograms) { program in
                                 liveProgramRow(program)
                                     .id(program.id)
-                                Divider().overlay(Color.primary.opacity(0.10))
                             }
                         }
                     }
@@ -2367,7 +2368,7 @@ struct PlayerScreen: View {
             if let interval, liveGuideClock < interval.start { return "未开始" }
             return "不可回放"
         }()
-        let statusColor = isPlaying ? Color.tvboxAccent : Color(uiColor: .secondaryLabel)
+        let statusColor = isPlaying ? Color.white : Color.tvboxMuted
         return Button {
             guard let target, let context = liveContext else { return }
             if let request = context.request(
@@ -2403,15 +2404,20 @@ struct PlayerScreen: View {
                     .font(.system(size: TVBoxTypography.readable(11, minimum: 23), weight: .medium))
                     .foregroundStyle(target == nil ? Color(uiColor: .secondaryLabel) : statusColor)
                     .lineLimit(1)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background((target == nil ? Color.white.opacity(0.08) : statusColor.opacity(0.16)), in: Capsule())
             }
             .padding(.vertical, TVBoxTypography.readable(11, minimum: 18))
             .padding(.horizontal, TVBoxTypography.readable(10, minimum: 18))
             .frame(minHeight: TVBoxTypography.readable(68, minimum: 104))
-            .background(isPlaying ? Color.tvboxAccent.opacity(0.14) : .clear,
+            .background(isPlaying ? Color.tvboxSelection.opacity(0.42) : Color.tvboxSurface.opacity(0.92),
                         in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(isPlaying ? Color.tvboxSelection.opacity(0.75) : Color.white.opacity(0.08), lineWidth: 1))
             .contentShape(Rectangle())
         }
-        .platformFocusableButtonStyle()
+        .playerControlButtonStyle(isAccent: isPlaying)
         .disabled(target == nil)
     }
 
@@ -2466,7 +2472,14 @@ struct PlayerScreen: View {
             : panel == .playlist ? playlistPanelWidth
             : min(max(size.width * 0.32, 280), 390))
         .frame(maxHeight: .infinity, alignment: .top)
+        #if os(tvOS)
+        .background(Color.black.opacity(0.96))
+        #else
         .background(.regularMaterial)
+        #endif
+        .overlay(alignment: .trailing) {
+            Rectangle().fill(Color.white.opacity(0.10)).frame(width: 1)
+        }
         .foregroundStyle(Color(uiColor: .label))
         .contentShape(Rectangle())
         .simultaneousGesture(TapGesture().onEnded { })
@@ -3335,7 +3348,7 @@ private struct PlayerControlButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .foregroundStyle(.white)
-            .background((isAccent || isFocused ? Color.tvboxAccent : Color.white.opacity(0.14)), in: Capsule())
+            .background((isAccent || isFocused ? Color.tvboxSelection : Color.white.opacity(0.14)), in: Capsule())
             .overlay(Capsule().strokeBorder(isFocused ? .white.opacity(0.85) : .clear, lineWidth: 2))
             .scaleEffect(configuration.isPressed ? 0.94 : (isFocused ? 1.06 : 1))
             .animation(.easeOut(duration: 0.12), value: isFocused)
@@ -3344,10 +3357,7 @@ private struct PlayerControlButtonStyle: ButtonStyle {
 
 private extension View {
     func playerControlButtonStyle(isAccent: Bool = false) -> some View {
-        #if os(tvOS)
-        self.buttonStyle(.card)
-        #else
         self.buttonStyle(PlayerControlButtonStyle(isAccent: isAccent))
-        #endif
+            .focusEffectDisabled()
     }
 }

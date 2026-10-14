@@ -207,22 +207,26 @@ struct MediaCard: View {
 
     var body: some View {
         NavigationLink(value: item) {
-            VStack(alignment: .leading, spacing: 9) {
-                MediaArtwork(item: item)
+            VStack(alignment: .leading, spacing: 8) {
+                MediaArtwork(item: item, showsTitle: false)
                     .aspectRatio(0.72, contentMode: .fit)
-                Text(item.title)
-                    .font(.system(size: TVBoxTypography.readable(15), weight: .semibold, design: .rounded))
-                    .foregroundStyle(Color.primary)
-                    .lineLimit(1)
-                let metadata = item.subtitle.isEmpty ? item.category : item.subtitle
-                Text(metadata.isEmpty ? " " : metadata)
-                    .font(.system(size: TVBoxTypography.readable(12, minimum: 23), weight: .medium))
-                    .foregroundStyle(Color.tvboxMuted)
-                    .lineLimit(1)
-                    .frame(minHeight: TVBoxTypography.readable(15, minimum: 25), alignment: .topLeading)
-                    .accessibilityHidden(metadata.isEmpty)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(item.title)
+                        .font(.system(size: TVBoxTypography.readable(15), weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color.primary)
+                        .lineLimit(1)
+                    let metadata = item.subtitle.isEmpty ? item.category : item.subtitle
+                    Text(metadata.isEmpty ? " " : metadata)
+                        .font(.system(size: TVBoxTypography.readable(12, minimum: 23), weight: .medium))
+                        .foregroundStyle(Color.tvboxMuted)
+                        .lineLimit(1)
+                        .frame(minHeight: TVBoxTypography.readable(15, minimum: 25), alignment: .topLeading)
+                        .accessibilityHidden(metadata.isEmpty)
+                }
+                .padding(.horizontal, 9)
+                .padding(.bottom, 8)
             }
-            .contentShape(RoundedRectangle(cornerRadius: 18))
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
         .platformFocusableButtonStyle()
         .accessibilityHint("打开详情和选集")

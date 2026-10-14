@@ -65,8 +65,9 @@ struct DetailView: View {
             .navigationTitle("")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #else
+            .toolbar(.hidden, for: .navigationBar)
             #endif
-            .toolbar(.visible, for: .navigationBar)
         }
         .task(id: item.id) {
             let loaded = await catalog.detail(for: item)
@@ -180,7 +181,9 @@ struct DetailView: View {
                     .aspectRatio(0.74, contentMode: .fit)
                     .frame(width: 122)
                 VStack(alignment: .leading, spacing: 12) {
-                    SectionEyebrow(text: media.category.isEmpty ? media.sourceName : media.category)
+                    if !media.category.isEmpty {
+                        SectionEyebrow(text: media.category)
+                    }
                     Text(media.title)
                         .font(.system(size: TVBoxTypography.readable(23), weight: .bold, design: .rounded))
                         .foregroundStyle(Color.primary)
@@ -209,8 +212,8 @@ struct DetailView: View {
 
     private func overviewText(compact: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: compact ? 8 : 16) {
-            if !compact {
-                SectionEyebrow(text: media.category.isEmpty ? media.sourceName : media.category)
+            if !compact, !media.category.isEmpty {
+                SectionEyebrow(text: media.category)
             }
             Text(media.title)
                 .font(.system(size: TVBoxTypography.readable(compact ? 23 : 36), weight: .bold, design: .rounded))
