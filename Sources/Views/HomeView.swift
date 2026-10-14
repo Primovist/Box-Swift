@@ -337,20 +337,11 @@ struct HomeView: View {
                 Text(category.name).tag(category.id)
             }
         } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "line.3.horizontal.decrease.circle")
-                    .foregroundStyle(Color.tvboxAccent)
-                Text(catalog.selectedCategory?.name ?? "最近更新")
-                    .fontWeight(.semibold)
-                Spacer(minLength: 12)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: TVBoxTypography.readable(12, minimum: 22), weight: .bold))
-                    .foregroundStyle(Color.tvboxMuted)
-            }
-            .frame(maxWidth: .infinity, minHeight: TVBoxTypography.readable(52, minimum: 76), alignment: .leading)
-            .padding(.horizontal, 18)
-            .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            Label(catalog.selectedCategory?.name ?? "最近更新", systemImage: "line.3.horizontal.decrease.circle")
+                .fontWeight(.semibold)
+                .frame(maxWidth: .infinity, minHeight: TVBoxTypography.readable(52, minimum: 76), alignment: .leading)
+                .padding(.horizontal, 18)
+                .contentShape(Rectangle())
         }
         .pickerStyle(.menu)
         #if os(tvOS)
@@ -382,14 +373,10 @@ struct HomeView: View {
                                  : (filter.options.first(where: { $0.value == catalog.selectedFilterValue(for: filter.key) })?.title ?? "全部"))
                                 .fontWeight(.semibold)
                                 .foregroundStyle(Color.primary)
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: TVBoxTypography.readable(10, minimum: 20), weight: .bold))
-                                .foregroundStyle(Color.tvboxMuted)
                         }
                         .frame(minHeight: TVBoxTypography.readable(44, minimum: 68))
-                        .padding(.horizontal, 16)
-                        .background(Color.tvboxSurface, in: Capsule())
-                        .contentShape(Capsule())
+                        .padding(.horizontal, 10)
+                        .contentShape(Rectangle())
                     }
                     .pickerStyle(.menu)
                 }

@@ -61,29 +61,12 @@ struct SectionEyebrow: View {
     }
 }
 
-struct FocusAwareButtonStyle: ButtonStyle {
-    @Environment(\.isFocused) private var isFocused
-    @Environment(\.colorScheme) private var colorScheme
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(isFocused ? (colorScheme == .dark ? Color.white : Color.black) : .clear, lineWidth: 3)
-                    .padding(-3)
-            }
-            .scaleEffect(configuration.isPressed ? 0.97 : (isFocused ? 1.06 : 1))
-            .animation(.easeOut(duration: 0.13), value: configuration.isPressed)
-            .animation(.easeOut(duration: 0.13), value: isFocused)
-    }
-}
-
 struct PlatformFocusableButtonStyle: ViewModifier {
     func body(content: Content) -> some View {
         #if os(tvOS)
         content.buttonStyle(.card)
         #else
-        content.buttonStyle(FocusAwareButtonStyle())
+        content.buttonStyle(.automatic)
         #endif
     }
 }
