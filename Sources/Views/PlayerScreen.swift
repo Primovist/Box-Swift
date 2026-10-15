@@ -1340,10 +1340,7 @@ struct PlayerScreen: View {
                 session.play()
             }
         }
-        .alert("无法开始播放", isPresented: Binding(
-            get: { errorMessage != nil },
-            set: { if !$0 { errorMessage = nil } }
-        )) {
+        .alert("无法开始播放", isPresented: playerErrorAlertPresented) {
             Button("好", role: .cancel) { errorMessage = nil }
         } message: {
             Text(errorMessage ?? "")
@@ -1375,37 +1372,7 @@ struct PlayerScreen: View {
         }
         #if os(iOS)
         .sheet(isPresented: $isShowingPortraitLibrary) {
-            NavigationStack {
-                GeometryReader { sheetGeometry in
-                    Group {
-                        if liveContext != nil {
-                            livePortraitPanels
-                        } else if let item = session.request.item {
-                            vodPortraitDetails(item, minimumHeight: sheetGeometry.size.height)
-                        } else {
-                            ContentUnavailableView("没有可浏览的内容", systemImage: "list.bullet")
-                        }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("完成") { isShowingPortraitLibrary = false }
-                    }
-                }
-                .navigationTitle(liveContext == nil ? "选集与片源" : "频道与节目")
-                .navigationBarTitleDisplayMode(.inline)
-            }
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
-            .alert("无法开始播放", isPresented: Binding(
-                get: { portraitLibraryErrorMessage != nil },
-                set: { if !$0 { portraitLibraryErrorMessage = nil } }
-            )) {
-                Button("好", role: .cancel) { portraitLibraryErrorMessage = nil }
-            } message: {
-                Text(portraitLibraryErrorMessage ?? "")
-            }
+            portraitLibrarySheet
         }
         #endif
         #if os(iOS)
@@ -1423,20 +1390,81 @@ struct PlayerScreen: View {
             }
         }
 #if os(tvOS)
-        .onExitCommand {
-            if landscapeLivePanel != nil {
-                revealControls()
-            } else {
-                closePlayer()
-            }
-        }
-        .onPlayPauseCommand {
-            session.togglePlayback()
-            revealControls()
-        }
+        .onExitCommand(perform: handleExitCommand)
+        .onPlayPauseCommand(perform: handlePlayPauseCommand)
         #endif
         .preferredColorScheme(.dark)
     }
+
+    private var playerErrorAlertPresented: Binding<Bool> {
+        Binding(
+            get: { errorMessage != nil },
+            set: setPlayerErrorAlertPresented
+        )
+    }
+
+    private func setPlayerErrorAlertPresented(_ isPresented: Bool) {
+        if !isPresented { errorMessage = nil }
+    }
+
+    #if os(iOS)
+    private var portraitLibrarySheet: some View {
+        NavigationStack {
+            GeometryReader { sheetGeometry in
+                Group {
+                    if liveContext != nil {
+                        livePortraitPanels
+                    } else if let item = session.request.item {
+                        vodPortraitDetails(item, minimumHeight: sheetGeometry.size.height)
+                    } else {
+                        ContentUnavailableView("没有可浏览的内容", systemImage: "list.bullet")
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { isShowingPortraitLibrary = false }
+                }
+            }
+            .navigationTitle(liveContext == nil ? "选集与片源" : "频道与节目")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .alert("无法开始播放", isPresented: portraitLibraryErrorAlertPresented) {
+            Button("好", role: .cancel) { portraitLibraryErrorMessage = nil }
+        } message: {
+            Text(portraitLibraryErrorMessage ?? "")
+        }
+    }
+
+    private var portraitLibraryErrorAlertPresented: Binding<Bool> {
+        Binding(
+            get: { portraitLibraryErrorMessage != nil },
+            set: setPortraitLibraryErrorAlertPresented
+        )
+    }
+
+    private func setPortraitLibraryErrorAlertPresented(_ isPresented: Bool) {
+        if !isPresented { portraitLibraryErrorMessage = nil }
+    }
+    #endif
+
+    #if os(tvOS)
+    private func handleExitCommand() {
+        if landscapeLivePanel != nil {
+            revealControls()
+        } else {
+            closePlayer()
+        }
+    }
+
+    private func handlePlayPauseCommand() {
+        session.togglePlayback()
+        revealControls()
+    }
+    #endif
 
     #if os(iOS)
     private func touchInteractionLayer(
