@@ -214,6 +214,9 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     private var progressTimer: Timer?
     private var catchupTimelineOffsetMilliseconds = 0
     private var isAwaitingCatchupMediaSample = false
+    private var isWaitingForPlaybackDuration = false
+    private var playbackDurationWaitStartedAt: TimeInterval?
+    private var hasStartedPlaybackForCurrentMedia = false
     private var isDanmakuBuffering = false
     private var pendingDanmakuSeekTargetMilliseconds: Double?
     private var pendingPositionSeekTargetFraction: Double?
@@ -227,6 +230,10 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     private var latePositionSeekTargetFraction: Double?
     private var latePositionSeekOriginFraction: Double?
     private var latePositionSeekOriginMilliseconds: Double?
+    private var resumePositionTargetMilliseconds: Int?
+    private var resumePositionStartedAt: TimeInterval?
+    private var resumePositionLastAttemptAt: TimeInterval?
+    private var resumePositionAttempts = 0
     private var danmakuSeekOriginMilliseconds: Double?
     private var danmakuSeekLastSampleMilliseconds: Double?
     private var danmakuSeekLastSampleUptime: TimeInterval?
@@ -262,14 +269,27 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
             return
         }
         playbackRequested = true
-        status = "正在连接…"
-        player.play()
+        if hasStartedPlaybackForCurrentMedia || request.isLive || totalDurationMilliseconds > 0 {
+            startPlaybackNow()
+        } else {
+            if !isWaitingForPlaybackDuration {
+                isWaitingForPlaybackDuration = true
+                playbackDurationWaitStartedAt = playbackDurationWaitStartedAt ?? ProcessInfo.processInfo.systemUptime
+            }
+            status = "正在获取视频时长…"
+        }
         startProgressUpdates()
+        refreshProgress()
     }
 
     func retry() {
         ignoreNextStoppedEvent = true
         observedNearEnd = false
+        updateDanmakuClockPlaybackState(isPlaying: false, isBuffering: false)
+        clearResumePositionSeek()
+        isWaitingForPlaybackDuration = false
+        playbackDurationWaitStartedAt = nil
+        hasStartedPlaybackForCurrentMedia = false
         reportedDurationMilliseconds = 0
         player.stop()
         player.media = makeMedia()
@@ -300,6 +320,10 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         progressTimer = nil
         ignoreNextStoppedEvent = true
         observedNearEnd = false
+        clearResumePositionSeek()
+        isWaitingForPlaybackDuration = false
+        playbackDurationWaitStartedAt = nil
+        hasStartedPlaybackForCurrentMedia = false
         reportedDurationMilliseconds = 0
         player.stop()
         self.request = request
@@ -340,10 +364,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         if playbackRequested || isPlaying {
             pause()
         } else {
-            player.play()
-            playbackRequested = true
-            updateDanmakuClockPlaybackState(isPlaying: true, isBuffering: false)
-            status = "正在播放"
+            play()
         }
         refreshProgress()
     }
@@ -351,6 +372,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     func pause() {
         guard playbackRequested || isPlaying else { return }
         playbackRequested = false
+        isWaitingForPlaybackDuration = false
         player.pause()
         updateDanmakuClockPlaybackState(isPlaying: false, isBuffering: false)
         status = "已暂停"
@@ -359,6 +381,8 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
 
     func seek(by seconds: Int) {
         guard canSeekByTime else { return }
+        clearResumePositionSeek()
+        didApplyResumePosition = true
         let duration = totalDurationMilliseconds
         let origin = currentPlaybackMilliseconds
         let target = min(duration, max(0, origin + seconds * 1_000))
@@ -395,6 +419,8 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
 
     func seek(to fraction: Double) {
         guard canSeek else { return }
+        clearResumePositionSeek()
+        didApplyResumePosition = true
         let duration = totalDurationMilliseconds
         let boundedFraction = min(1, max(0, fraction))
         guard duration > 0 || player.isSeekable else { return }
@@ -460,6 +486,9 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
 #if os(iOS)
         if isPictureInPictureReady { pictureInPictureController?.stopPictureInPicture() }
 #endif
+        clearResumePositionSeek()
+        isWaitingForPlaybackDuration = false
+        playbackDurationWaitStartedAt = nil
         progressTimer?.invalidate()
         progressTimer = nil
         ignoreNextStoppedEvent = true
@@ -544,6 +573,8 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
             DispatchQueue.main.async(execute: completion)
             return
         }
+        clearResumePositionSeek()
+        didApplyResumePosition = true
         let origin = currentPlaybackMilliseconds
         let target = max(0, min(totalDurationMilliseconds, origin + Int(offset)))
         if seekCatchupIfNeeded(to: target) {
@@ -691,6 +722,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
                 if reachedEnd { didReachEnd = true }
             }
         case .error:
+            clearResumePositionSeek()
             playbackRequested = false
             status = "播放失败"
             updateDanmakuClockPlaybackState(isPlaying: false, isBuffering: false)
@@ -717,24 +749,25 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     }
 
     private func refreshProgress() {
-        if !didApplyResumePosition, isPlaying, player.isSeekable {
-            didApplyResumePosition = true
+        startPendingPlaybackIfDurationReady()
+        if !didApplyResumePosition, isPlaying, player.isSeekable, totalDurationMilliseconds > 0 {
             let target = request.resumeMilliseconds > 0
                 ? request.resumeMilliseconds
                 : request.skipOpeningMilliseconds
             if target > 0 {
                 let duration = totalDurationMilliseconds
                 let position = duration > 0 ? min(target, max(0, duration - 1_000)) : target
-                let origin = currentPlaybackMilliseconds
-                player.time = VLCTime(int: Int32(clamping: max(0, position - catchupTimelineOffsetMilliseconds)))
-                resetDanmakuClock(to: position, awaitingPlayerSample: true, originMilliseconds: origin)
+                beginResumePositionSeek(to: position)
+            } else {
+                didApplyResumePosition = true
             }
         }
-        let current = currentPlaybackMilliseconds
-        updateDanmakuClock(with: Int32(clamping: current))
+        let sampledCurrent = currentPlaybackMilliseconds
+        let current = resumePositionDisplayMilliseconds(for: sampledCurrent)
+        updateDanmakuClock(with: Int32(clamping: sampledCurrent))
         let total = totalDurationMilliseconds
         if isPlaying {
-            observedNearEnd = !request.isLive && total > 0 && Int(current) >= Int(total) - 1_500
+            observedNearEnd = !request.isLive && total > 0 && sampledCurrent >= total - 1_500
         }
         let currentValue = Int(current)
         if currentMilliseconds != currentValue { currentMilliseconds = currentValue }
@@ -744,14 +777,87 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         if durationText != durationValue { durationText = durationValue }
         let progressValue = total > 0
             ? min(1, Double(current) / Double(total))
-            : (player.isSeekable && !request.isLive ? min(1, max(0, Double(player.position))) : 0)
+            : 0
         if abs(progress - progressValue) > 0.0001 { progress = progressValue }
-        let canSeekValue = !request.isLive
+        let canSeekValue = !request.isLive && total > 0
             && (player.isSeekable || request.catchupWindow?.supportsServerSeeking == true)
         if canSeek != canSeekValue { canSeek = canSeekValue }
         let canSeekByTimeValue = !request.isLive && total > 0
             && (player.isSeekable || request.catchupWindow?.supportsServerSeeking == true)
         if canSeekByTime != canSeekByTimeValue { canSeekByTime = canSeekByTimeValue }
+    }
+
+    private func startPendingPlaybackIfDurationReady() {
+        guard isWaitingForPlaybackDuration, playbackRequested else { return }
+        let waited = ProcessInfo.processInfo.systemUptime - (playbackDurationWaitStartedAt ?? ProcessInfo.processInfo.systemUptime)
+        // Do not leave unusual streams stuck forever if VLC cannot determine a duration.
+        guard totalDurationMilliseconds > 0 || waited >= 8 else { return }
+        isWaitingForPlaybackDuration = false
+        playbackDurationWaitStartedAt = nil
+        startPlaybackNow()
+    }
+
+    private func startPlaybackNow() {
+        isWaitingForPlaybackDuration = false
+        playbackDurationWaitStartedAt = nil
+        playbackRequested = true
+        status = "正在连接…"
+        hasStartedPlaybackForCurrentMedia = true
+        player.play()
+    }
+
+    private func beginResumePositionSeek(to position: Int) {
+        didApplyResumePosition = true
+        resumePositionTargetMilliseconds = position
+        resumePositionStartedAt = ProcessInfo.processInfo.systemUptime
+        resumePositionLastAttemptAt = nil
+        resumePositionAttempts = 0
+        issueResumePositionSeek(to: position)
+    }
+
+    private func issueResumePositionSeek(to position: Int) {
+        let origin = currentPlaybackMilliseconds
+        player.time = VLCTime(int: Int32(clamping: max(0, position - catchupTimelineOffsetMilliseconds)))
+        resetDanmakuClock(to: position, awaitingPlayerSample: true, originMilliseconds: origin)
+        resumePositionAttempts += 1
+        resumePositionLastAttemptAt = ProcessInfo.processInfo.systemUptime
+    }
+
+    private func resumePositionDisplayMilliseconds(for sampledCurrent: Int) -> Int {
+        guard let target = resumePositionTargetMilliseconds,
+              let startedAt = resumePositionStartedAt else { return sampledCurrent }
+        let now = ProcessInfo.processInfo.systemUptime
+        let elapsed = now - startedAt
+
+        // VLC can emit a stale start-time sample after accepting the initial seek.
+        // Keep the requested resume point briefly and retry if that sample regresses.
+        if sampledCurrent >= target - 1_500 {
+            if elapsed >= 5 {
+                clearResumePositionSeek()
+            }
+            return sampledCurrent
+        }
+
+        if elapsed >= 8 {
+            clearResumePositionSeek()
+            return sampledCurrent
+        }
+
+        if resumePositionAttempts < 3,
+           playbackRequested,
+           isPlaying,
+           player.isSeekable,
+           now - (resumePositionLastAttemptAt ?? startedAt) >= 1.2 {
+            issueResumePositionSeek(to: target)
+        }
+        return target
+    }
+
+    private func clearResumePositionSeek() {
+        resumePositionTargetMilliseconds = nil
+        resumePositionStartedAt = nil
+        resumePositionLastAttemptAt = nil
+        resumePositionAttempts = 0
     }
 
     private func updateDanmakuClock(with sampledMilliseconds: Int32) {
@@ -1277,10 +1383,10 @@ struct PlayerScreen: View {
             DanmakuSearchView(
                 initialQuery: session.request.item?.title ?? session.title,
                 mediaTitle: session.request.item?.title ?? session.title,
-                mediaCategory: session.request.item?.category ?? "",
+                mediaCategory: currentDanmakuCategory,
                 mediaYear: session.request.item?.year ?? "",
                 currentEpisodeTitle: currentDanmakuEpisodeTitle,
-                expectsEpisodeMatch: session.request.queue.count > 1
+                expectsEpisodeMatch: currentDanmakuExpectsEpisodeMatch
             ) { comments, matchTitle in
                 guard danmakuSearchPlaybackGeneration == session.playbackGeneration else { return }
                 danmakuTask?.cancel()
@@ -3556,9 +3662,42 @@ struct PlayerScreen: View {
     }
 
     private var currentDanmakuEpisodeTitle: String {
+        guard !currentDanmakuIsMovie else { return "" }
         let queue = session.request.queue
         guard queue.indices.contains(session.request.queueIndex) else { return "" }
         return queue[session.request.queueIndex].title
+    }
+
+    private var currentDanmakuIsMovie: Bool {
+        let category = session.request.item?.category.lowercased() ?? ""
+        if ["电影", "剧场版", "movie", "film"].contains(where: { category.contains($0) }) {
+            return true
+        }
+        let isSeriesCategory = ["电视剧", "连续剧", "剧集", "番剧", "动漫", "动画", "series", "tv"]
+            .contains(where: { category.contains($0) })
+        guard !isSeriesCategory, !session.request.queue.isEmpty else { return false }
+        return session.request.queue.allSatisfy { episode in
+            let title = episode.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return ["正片", "电影正片", "全片", "movie", "feature"].contains(title)
+        }
+    }
+
+    private var currentDanmakuExpectsEpisodeMatch: Bool {
+        guard !currentDanmakuIsMovie else { return false }
+        let category = session.request.item?.category.lowercased() ?? ""
+        return session.request.queue.count > 1
+            || ["电视剧", "连续剧", "剧集", "番剧", "动漫", "动画", "series", "tv"]
+                .contains(where: { category.contains($0) })
+    }
+
+    private var currentDanmakuCategory: String {
+        let category = session.request.item?.category ?? ""
+        guard currentDanmakuIsMovie else { return category }
+        let lowercased = category.lowercased()
+        if ["电影", "剧场版", "movie", "film"].contains(where: { lowercased.contains($0) }) {
+            return category
+        }
+        return ["电影", category].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     private func presentDanmakuSearch() {
@@ -3580,10 +3719,10 @@ struct PlayerScreen: View {
         let source = session.request.danmakuSource?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let item = session.request.item
         let mediaTitle = item?.title ?? session.title
-        let category = item?.category ?? ""
+        let category = currentDanmakuCategory
         let year = item?.year ?? ""
         let episodeTitle = currentDanmakuEpisodeTitle
-        let isSeries = session.request.queue.count > 1
+        let isSeries = currentDanmakuExpectsEpisodeMatch
         let apiAddress = danmakuAPIAddress
         danmakuTask = Task { @MainActor in
             do {
