@@ -534,7 +534,11 @@ struct HomeView: View {
 
     private func liveChannelGrid(_ group: TVBoxLiveGroup, wide: Bool) -> some View {
         let channels = group.channels
+        #if os(tvOS)
         let columnCount = wide ? 4 : 2
+        #else
+        let columnCount = wide ? 3 : 2
+        #endif
         let rowCount = (channels.count + columnCount - 1) / columnCount
         let cellHeight = TVBoxTypography.readable(64, minimum: 112)
         let gridHeight = CGFloat(rowCount) * cellHeight + CGFloat(max(0, rowCount - 1) * 16)
@@ -574,6 +578,7 @@ struct HomeView: View {
                     .font(.system(size: TVBoxTypography.readable(14), weight: .bold))
                     .foregroundStyle(Color.primary)
                     .lineLimit(1)
+                    .layoutPriority(1)
                 Text("\(channel.sources.count) 条线路").font(.system(size: TVBoxTypography.readable(11, minimum: 23))).foregroundStyle(Color.tvboxMuted)
             }
             Spacer(minLength: 0)

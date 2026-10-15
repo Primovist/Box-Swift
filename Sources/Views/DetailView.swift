@@ -94,9 +94,9 @@ struct DetailView: View {
             playlist
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .padding(.horizontal, 36)
-        .padding(.vertical, 28)
-        .frame(maxWidth: 1500, maxHeight: .infinity, alignment: .top)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 8)
+        .frame(maxWidth: 1800, maxHeight: .infinity, alignment: .top)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 

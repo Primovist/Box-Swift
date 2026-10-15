@@ -39,11 +39,7 @@ struct DanmakuSearchView: View {
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
-                #if os(tvOS)
-                let compact = false
-                #else
                 let compact = geometry.size.height < 520
-                #endif
                 ZStack {
                     ScreenBackground()
                     resultsList(compact: compact, availableSize: geometry.size)
@@ -185,108 +181,42 @@ struct DanmakuSearchView: View {
     }
 
     private var contextLabelFont: Font {
-        #if os(tvOS)
-        .system(size: TVBoxTypography.readable(14, minimum: 23), weight: .semibold, design: .rounded)
-        #else
         .caption.weight(.semibold)
-        #endif
     }
 
     private var contextValueFont: Font {
-        #if os(tvOS)
-        .system(size: TVBoxTypography.readable(12, minimum: 23), weight: .medium)
-        #else
         .subheadline
-        #endif
     }
 
     private var statusFont: Font {
-        #if os(tvOS)
-        .system(size: TVBoxTypography.readable(12, minimum: 23), weight: .medium)
-        #else
         .subheadline
-        #endif
     }
 
     private var resultTitleFont: Font {
-        #if os(tvOS)
-        .system(size: TVBoxTypography.readable(14), weight: .semibold)
-        #else
         .headline
-        #endif
     }
 
     private var resultSubtitleFont: Font {
-        #if os(tvOS)
-        .system(size: TVBoxTypography.readable(11, minimum: 23))
-        #else
         .subheadline
-        #endif
     }
 
     private var searchActionFont: Font {
-        #if os(tvOS)
-        .system(size: TVBoxTypography.readable(16, minimum: 24), weight: .semibold)
-        #else
         .body.weight(.medium)
-        #endif
     }
 
-    private var searchContentMaxWidth: CGFloat {
-        #if os(tvOS)
-        1_800
-        #else
-        920
-        #endif
-    }
+    private let searchContentMaxWidth: CGFloat = 920
 
-    private var resultsMaxWidth: CGFloat {
-        #if os(tvOS)
-        1_680
-        #else
-        880
-        #endif
-    }
+    private let resultsMaxWidth: CGFloat = 880
 
-    private var searchHorizontalPadding: CGFloat {
-        #if os(tvOS)
-        64
-        #else
-        22
-        #endif
-    }
+    private let searchHorizontalPadding: CGFloat = 22
 
-    private var resultFocusPadding: CGFloat {
-        #if os(tvOS)
-        24
-        #else
-        8
-        #endif
-    }
+    private let resultFocusPadding: CGFloat = 8
 
-    private var resultRowMinimumHeight: CGFloat {
-        #if os(tvOS)
-        120
-        #else
-        72
-        #endif
-    }
+    private let resultRowMinimumHeight: CGFloat = 72
 
-    private var actionRowMinimumHeight: CGFloat {
-        #if os(tvOS)
-        88
-        #else
-        54
-        #endif
-    }
+    private let actionRowMinimumHeight: CGFloat = 54
 
-    private var resultFocusSpacing: CGFloat {
-        #if os(tvOS)
-        18
-        #else
-        10
-        #endif
-    }
+    private let resultFocusSpacing: CGFloat = 10
 
     private func statusBanner(_ text: String, isLoading: Bool = false) -> some View {
         HStack(alignment: .top, spacing: 12) {
@@ -371,32 +301,24 @@ struct DanmakuSearchView: View {
         Button(action: action) {
             HStack(spacing: 13) {
                 Image(systemName: icon)
-                    .font(.system(size: TVBoxTypography.readable(16, minimum: 24), weight: .semibold))
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(Color.tvboxCyan)
-                    .frame(width: TVBoxTypography.readable(38, minimum: 60), height: TVBoxTypography.readable(38, minimum: 60))
+                    .frame(width: 38, height: 38)
                     .background(Color.tvboxCyan.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
                         .font(resultTitleFont)
                         .foregroundStyle(Color.primary)
-                        #if os(tvOS)
-                        .lineLimit(2)
-                        #else
                         .fixedSize(horizontal: false, vertical: true)
-                        #endif
                     Text(subtitle)
                         .font(resultSubtitleFont)
                         .foregroundStyle(Color.tvboxMuted)
-                        #if os(tvOS)
-                        .lineLimit(2)
-                        #else
                         .fixedSize(horizontal: false, vertical: true)
-                        #endif
                 }
                 Spacer(minLength: 8)
-                Image(systemName: "chevron.right").font(.system(size: TVBoxTypography.readable(10, minimum: 20), weight: .bold)).foregroundStyle(Color.tvboxMuted)
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(Color.tvboxMuted)
             }
-            .padding(TVBoxTypography.readable(12, minimum: 20))
+            .padding(12)
             .frame(minHeight: resultRowMinimumHeight)
             .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 15))
         }
