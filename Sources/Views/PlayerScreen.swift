@@ -1991,7 +1991,7 @@ struct PlayerScreen: View {
                 }
             }
             .listStyle(.plain)
-            .scrollContentBackground(.hidden)
+            .platformListBackgroundHidden()
             .onAppear {
                 focusCurrentVodEpisode(using: proxy)
             }
@@ -2196,7 +2196,7 @@ struct PlayerScreen: View {
             }
         }
         .listStyle(.plain)
-        .scrollContentBackground(.hidden)
+        .platformListBackgroundHidden()
     }
 
     private var liveChannelContent: some View {
@@ -2237,7 +2237,7 @@ struct PlayerScreen: View {
             }
         }
         .listStyle(.plain)
-        .scrollContentBackground(.hidden)
+        .platformListBackgroundHidden()
     }
 
     @ViewBuilder
@@ -2290,7 +2290,7 @@ struct PlayerScreen: View {
                         }
                     }
                     .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
+                    .platformListBackgroundHidden()
                     .onAppear {
                         guard let groupID = selectedLiveGroup?.id else { return }
                         proxy.scrollTo(groupID, anchor: .center)
@@ -2350,7 +2350,7 @@ struct PlayerScreen: View {
                     }
                 }
                 .listStyle(.plain)
-                .scrollContentBackground(.hidden)
+                .platformListBackgroundHidden()
             }
             .frame(width: TVBoxTypography.readable(148, minimum: 310), alignment: .topLeading)
 
@@ -2395,7 +2395,7 @@ struct PlayerScreen: View {
                         }
                     }
                     .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
+                    .platformListBackgroundHidden()
                     .background(Color.clear)
                     .onAppear {
                         scrollToPlayingProgram(using: proxy, animated: false)
@@ -2447,7 +2447,7 @@ struct PlayerScreen: View {
             }
         }
         .listStyle(.plain)
-        .scrollContentBackground(.hidden)
+        .platformListBackgroundHidden()
     }
 
     private func liveProgramRow(_ program: TVBoxEPGProgram) -> some View {
@@ -3459,6 +3459,15 @@ struct PlayerScreen: View {
 }
 
 private extension View {
+    @ViewBuilder
+    func platformListBackgroundHidden() -> some View {
+        #if os(iOS)
+        self.scrollContentBackground(.hidden)
+        #else
+        self
+        #endif
+    }
+
     @ViewBuilder
     func playerControlButtonStyle(isAccent: Bool = false) -> some View {
         if isAccent {
