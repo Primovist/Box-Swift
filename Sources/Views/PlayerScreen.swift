@@ -3410,6 +3410,7 @@ struct PlayerScreen: View {
                 .labelStyle(.iconOnly)
                 .font(.system(size: TVBoxTypography.readable(17, minimum: 28), weight: .semibold))
                 .frame(width: TVBoxTypography.readable(52, minimum: 72), height: TVBoxTypography.readable(52, minimum: 72))
+                .contentShape(Capsule())
         }
         .playerControlButtonStyle()
         #if os(tvOS)
