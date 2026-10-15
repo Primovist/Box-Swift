@@ -1206,140 +1206,28 @@ struct PlayerScreen: View {
         #if os(iOS)
         .statusBarHidden(true)
         #endif
-        .onAppear {
-            let option = Self.aspectRatios.first { $0.value == savedAspectRatio }
-            session.setAspectRatio(option?.value.isEmpty == false ? option?.value : nil, label: option?.label ?? "原始")
-            focusLiveGuideDateForPlayback()
-            session.play()
-            loadEpisodeDanmaku()
-            #if os(tvOS)
-            focusedOverlayControl = "play"
-            #endif
-        }
+        .onAppear(perform: preparePlayerOnAppear)
         .task(id: liveGuideTaskKey) {
             await loadLiveGuide()
         }
-        .onDisappear {
-            persistPlaybackPosition()
-            danmakuTask?.cancel()
-            controlsHideTask?.cancel()
-            controlsRevealTask?.cancel()
-            interactionHUDTask?.cancel()
-            vodSelectionTask?.cancel()
-            vodSelectionTask = nil
-            #if os(tvOS)
-            progressScrubCommitTask?.cancel()
-            #endif
-            #if os(iOS)
-            restoreOrientationAfterPlayback()
-            #endif
-            session.stop()
-        }
-        .onReceive(historySaveTimer) { _ in
-            let calendar = liveGuideCalendar
-            let previousDay = calendar.startOfDay(for: liveGuideClock)
-            let wasFollowingLiveToday = session.request.isLive
-                && session.request.catchupWindow == nil
-                && calendar.isDate(liveGuideDate, inSameDayAs: previousDay)
-            let currentTime = Date()
-            liveGuideClock = currentTime
-            let currentDay = calendar.startOfDay(for: currentTime)
-            if wasFollowingLiveToday && !calendar.isDate(previousDay, inSameDayAs: currentDay) {
-                liveGuideDate = currentDay
-            }
-            persistPlaybackPosition()
-        }
-        .onChange(of: session.didReachEnd) { _, reachedEnd in
-            guard reachedEnd, autoNextEpisode, !session.request.isLive, session.request.liveContext == nil,
-                  session.request.queueIndex + 1 < session.request.queue.count else { return }
-            moveToEpisode(1)
-        }
-        .onChange(of: session.playbackGeneration) { _, _ in
-            #if os(tvOS)
-            progressScrubCommitTask?.cancel()
-            progressScrubCommitTask = nil
-            isScrubbing = false
-            seekValue = session.progress
-            #endif
-            focusLiveGuideDateForPlayback()
-            loadEpisodeDanmaku()
-        }
-        .onChange(of: danmakuEnabled) { _, enabled in
-            if enabled {
-                if skipNextDanmakuEnableReload {
-                    skipNextDanmakuEnableReload = false
-                } else {
-                    loadEpisodeDanmaku()
-                }
-            } else {
-                skipNextDanmakuEnableReload = false
-            }
-        }
+        .onDisappear(perform: cleanupPlayerOnDisappear)
+        .onReceive(historySaveTimer, perform: handleHistorySaveTimer)
+        .onChange(of: session.didReachEnd) { _, reachedEnd in handlePlaybackDidReachEnd(reachedEnd) }
+        .onChange(of: session.playbackGeneration) { _, _ in handlePlaybackGenerationChanged() }
+        .onChange(of: danmakuEnabled) { _, enabled in handleDanmakuEnabledChanged(enabled) }
         .onChange(of: session.isPlaying) { _, _ in
             refreshControls()
         }
         #if os(tvOS)
-        .onChange(of: session.status) { previousStatus, status in
-            if status == "播放失败" {
-                controlsHideTask?.cancel()
-                withAnimation(.easeInOut(duration: 0.2)) { areControlsVisible = true }
-                landscapeLivePanel = nil
-                focusedOverlayControl = nil
-                restorePrimaryControlFocus()
-            } else if previousStatus == "播放失败" {
-                focusedOverlayControl = nil
-                restorePrimaryControlFocus()
-            }
-        }
-        .onChange(of: focusedOverlayControl) { _, focusedControl in
-            if focusedControl != nil && areControlsVisible { refreshControls() }
-        }
+        .onChange(of: session.status) { previousStatus, status in handleSessionStatusChanged(previousStatus, status) }
+        .onChange(of: focusedOverlayControl) { _, focusedControl in handleFocusedControlChanged(focusedControl) }
         #endif
-        .onChange(of: isScrubbing) { _, scrubbing in
-            if scrubbing { controlsHideTask?.cancel() }
-            else { refreshControls() }
-        }
-        .onChange(of: isPlayerPresentationActive) { _, active in
-            if active {
-                controlsHideTask?.cancel()
-            } else {
-                refreshControls()
-                #if os(tvOS)
-                restorePrimaryControlFocus()
-                #endif
-            }
-        }
-        .onChange(of: showingDanmakuSearch) { _, showing in
-            if !showing && resumePlaybackAfterDanmakuSearch {
-                resumePlaybackAfterDanmakuSearch = false
-                session.play()
-            }
-        }
-        .onChange(of: showingDanmakuSettings) { _, showing in
-            if showing {
-                danmakuAPIWhenSettingsOpened = danmakuAPIAddress
-            } else {
-                if resumePlaybackAfterDanmakuSettings {
-                    resumePlaybackAfterDanmakuSettings = false
-                    session.play()
-                }
-                if danmakuEnabled, danmakuAPIWhenSettingsOpened != danmakuAPIAddress {
-                    loadEpisodeDanmaku()
-                }
-            }
-        }
-        .onChange(of: showingPlayerMenu) { _, showing in
-            if !showing && resumePlaybackAfterPlayerMenu {
-                resumePlaybackAfterPlayerMenu = false
-                session.play()
-            }
-        }
-        .onChange(of: showingSubtitleTracks) { _, showing in
-            if !showing && resumePlaybackAfterSubtitleSelection {
-                resumePlaybackAfterSubtitleSelection = false
-                session.play()
-            }
-        }
+        .onChange(of: isScrubbing) { _, scrubbing in handleScrubbingChanged(scrubbing) }
+        .onChange(of: isPlayerPresentationActive) { _, active in handlePlayerPresentationChanged(active) }
+        .onChange(of: showingDanmakuSearch) { _, showing in handleDanmakuSearchPresentationChanged(showing) }
+        .onChange(of: showingDanmakuSettings) { _, showing in handleDanmakuSettingsPresentationChanged(showing) }
+        .onChange(of: showingPlayerMenu) { _, showing in handlePlayerMenuPresentationChanged(showing) }
+        .onChange(of: showingSubtitleTracks) { _, showing in handleSubtitlePresentationChanged(showing) }
         .alert("无法开始播放", isPresented: playerErrorAlertPresented) {
             Button("好", role: .cancel) { errorMessage = nil }
         } message: {
@@ -1463,6 +1351,145 @@ struct PlayerScreen: View {
     private func handlePlayPauseCommand() {
         session.togglePlayback()
         revealControls()
+    }
+    #endif
+
+    private func preparePlayerOnAppear() {
+        let option = Self.aspectRatios.first { $0.value == savedAspectRatio }
+        session.setAspectRatio(option?.value.isEmpty == false ? option?.value : nil, label: option?.label ?? "原始")
+        focusLiveGuideDateForPlayback()
+        session.play()
+        loadEpisodeDanmaku()
+        #if os(tvOS)
+        focusedOverlayControl = "play"
+        #endif
+    }
+
+    private func cleanupPlayerOnDisappear() {
+        persistPlaybackPosition()
+        danmakuTask?.cancel()
+        controlsHideTask?.cancel()
+        controlsRevealTask?.cancel()
+        interactionHUDTask?.cancel()
+        vodSelectionTask?.cancel()
+        vodSelectionTask = nil
+        #if os(tvOS)
+        progressScrubCommitTask?.cancel()
+        #endif
+        #if os(iOS)
+        restoreOrientationAfterPlayback()
+        #endif
+        session.stop()
+    }
+
+    private func handleHistorySaveTimer(_: Date) {
+        let calendar = liveGuideCalendar
+        let previousDay = calendar.startOfDay(for: liveGuideClock)
+        let wasFollowingLiveToday = session.request.isLive
+            && session.request.catchupWindow == nil
+            && calendar.isDate(liveGuideDate, inSameDayAs: previousDay)
+        let currentTime = Date()
+        liveGuideClock = currentTime
+        let currentDay = calendar.startOfDay(for: currentTime)
+        if wasFollowingLiveToday && !calendar.isDate(previousDay, inSameDayAs: currentDay) {
+            liveGuideDate = currentDay
+        }
+        persistPlaybackPosition()
+    }
+
+    private func handlePlaybackDidReachEnd(_ reachedEnd: Bool) {
+        guard reachedEnd, autoNextEpisode, !session.request.isLive, session.request.liveContext == nil,
+              session.request.queueIndex + 1 < session.request.queue.count else { return }
+        moveToEpisode(1)
+    }
+
+    private func handlePlaybackGenerationChanged() {
+        #if os(tvOS)
+        progressScrubCommitTask?.cancel()
+        progressScrubCommitTask = nil
+        isScrubbing = false
+        seekValue = session.progress
+        #endif
+        focusLiveGuideDateForPlayback()
+        loadEpisodeDanmaku()
+    }
+
+    private func handleDanmakuEnabledChanged(_ enabled: Bool) {
+        if enabled {
+            if skipNextDanmakuEnableReload {
+                skipNextDanmakuEnableReload = false
+            } else {
+                loadEpisodeDanmaku()
+            }
+        } else {
+            skipNextDanmakuEnableReload = false
+        }
+    }
+
+    private func handleScrubbingChanged(_ scrubbing: Bool) {
+        if scrubbing { controlsHideTask?.cancel() }
+        else { refreshControls() }
+    }
+
+    private func handlePlayerPresentationChanged(_ active: Bool) {
+        if active {
+            controlsHideTask?.cancel()
+        } else {
+            refreshControls()
+            #if os(tvOS)
+            restorePrimaryControlFocus()
+            #endif
+        }
+    }
+
+    private func handleDanmakuSearchPresentationChanged(_ showing: Bool) {
+        guard !showing, resumePlaybackAfterDanmakuSearch else { return }
+        resumePlaybackAfterDanmakuSearch = false
+        session.play()
+    }
+
+    private func handleDanmakuSettingsPresentationChanged(_ showing: Bool) {
+        if showing {
+            danmakuAPIWhenSettingsOpened = danmakuAPIAddress
+            return
+        }
+        if resumePlaybackAfterDanmakuSettings {
+            resumePlaybackAfterDanmakuSettings = false
+            session.play()
+        }
+        if danmakuEnabled, danmakuAPIWhenSettingsOpened != danmakuAPIAddress {
+            loadEpisodeDanmaku()
+        }
+    }
+
+    private func handlePlayerMenuPresentationChanged(_ showing: Bool) {
+        guard !showing, resumePlaybackAfterPlayerMenu else { return }
+        resumePlaybackAfterPlayerMenu = false
+        session.play()
+    }
+
+    private func handleSubtitlePresentationChanged(_ showing: Bool) {
+        guard !showing, resumePlaybackAfterSubtitleSelection else { return }
+        resumePlaybackAfterSubtitleSelection = false
+        session.play()
+    }
+
+    #if os(tvOS)
+    private func handleSessionStatusChanged(_ previousStatus: String, _ status: String) {
+        if status == "播放失败" {
+            controlsHideTask?.cancel()
+            withAnimation(.easeInOut(duration: 0.2)) { areControlsVisible = true }
+            landscapeLivePanel = nil
+            focusedOverlayControl = nil
+            restorePrimaryControlFocus()
+        } else if previousStatus == "播放失败" {
+            focusedOverlayControl = nil
+            restorePrimaryControlFocus()
+        }
+    }
+
+    private func handleFocusedControlChanged(_ focusedControl: String?) {
+        if focusedControl != nil && areControlsVisible { refreshControls() }
     }
     #endif
 
