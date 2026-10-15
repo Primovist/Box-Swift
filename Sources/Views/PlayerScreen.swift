@@ -214,9 +214,6 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     private var progressTimer: Timer?
     private var catchupTimelineOffsetMilliseconds = 0
     private var isAwaitingCatchupMediaSample = false
-    private var isWaitingForPlaybackDuration = false
-    private var playbackDurationWaitStartedAt: TimeInterval?
-    private var hasStartedPlaybackForCurrentMedia = false
     private var isDanmakuBuffering = false
     private var pendingDanmakuSeekTargetMilliseconds: Double?
     private var pendingPositionSeekTargetFraction: Double?
@@ -269,15 +266,8 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
             return
         }
         playbackRequested = true
-        if hasStartedPlaybackForCurrentMedia || request.isLive || totalDurationMilliseconds > 0 {
-            startPlaybackNow()
-        } else {
-            if !isWaitingForPlaybackDuration {
-                isWaitingForPlaybackDuration = true
-                playbackDurationWaitStartedAt = playbackDurationWaitStartedAt ?? ProcessInfo.processInfo.systemUptime
-            }
-            status = "正在获取视频时长…"
-        }
+        status = "正在连接…"
+        player.play()
         startProgressUpdates()
         refreshProgress()
     }
@@ -287,9 +277,6 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         observedNearEnd = false
         updateDanmakuClockPlaybackState(isPlaying: false, isBuffering: false)
         clearResumePositionSeek()
-        isWaitingForPlaybackDuration = false
-        playbackDurationWaitStartedAt = nil
-        hasStartedPlaybackForCurrentMedia = false
         reportedDurationMilliseconds = 0
         player.stop()
         player.media = makeMedia()
@@ -321,9 +308,6 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         ignoreNextStoppedEvent = true
         observedNearEnd = false
         clearResumePositionSeek()
-        isWaitingForPlaybackDuration = false
-        playbackDurationWaitStartedAt = nil
-        hasStartedPlaybackForCurrentMedia = false
         reportedDurationMilliseconds = 0
         player.stop()
         self.request = request
@@ -372,7 +356,6 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     func pause() {
         guard playbackRequested || isPlaying else { return }
         playbackRequested = false
-        isWaitingForPlaybackDuration = false
         player.pause()
         updateDanmakuClockPlaybackState(isPlaying: false, isBuffering: false)
         status = "已暂停"
@@ -487,8 +470,6 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         if isPictureInPictureReady { pictureInPictureController?.stopPictureInPicture() }
 #endif
         clearResumePositionSeek()
-        isWaitingForPlaybackDuration = false
-        playbackDurationWaitStartedAt = nil
         progressTimer?.invalidate()
         progressTimer = nil
         ignoreNextStoppedEvent = true
@@ -749,7 +730,6 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     }
 
     private func refreshProgress() {
-        startPendingPlaybackIfDurationReady()
         if !didApplyResumePosition, isPlaying, player.isSeekable, totalDurationMilliseconds > 0 {
             let target = request.resumeMilliseconds > 0
                 ? request.resumeMilliseconds
@@ -785,25 +765,6 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         let canSeekByTimeValue = !request.isLive && total > 0
             && (player.isSeekable || request.catchupWindow?.supportsServerSeeking == true)
         if canSeekByTime != canSeekByTimeValue { canSeekByTime = canSeekByTimeValue }
-    }
-
-    private func startPendingPlaybackIfDurationReady() {
-        guard isWaitingForPlaybackDuration, playbackRequested else { return }
-        let waited = ProcessInfo.processInfo.systemUptime - (playbackDurationWaitStartedAt ?? ProcessInfo.processInfo.systemUptime)
-        // Do not leave unusual streams stuck forever if VLC cannot determine a duration.
-        guard totalDurationMilliseconds > 0 || waited >= 8 else { return }
-        isWaitingForPlaybackDuration = false
-        playbackDurationWaitStartedAt = nil
-        startPlaybackNow()
-    }
-
-    private func startPlaybackNow() {
-        isWaitingForPlaybackDuration = false
-        playbackDurationWaitStartedAt = nil
-        playbackRequested = true
-        status = "正在连接…"
-        hasStartedPlaybackForCurrentMedia = true
-        player.play()
     }
 
     private func beginResumePositionSeek(to position: Int) {
