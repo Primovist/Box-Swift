@@ -823,7 +823,7 @@ private struct LiveEPGSheet: View {
             programs = []
             message = nil
             guard !template.isEmpty else {
-                message = "配置没有提供节目单地址。"
+                message = "无有效节目单"
                 isLoading = false
                 return
             }
@@ -831,12 +831,12 @@ private struct LiveEPGSheet: View {
                 let loaded = try await CatalogService().loadEPG(for: channel.name, template: template, date: selectedDate)
                 guard !Task.isCancelled else { return }
                 programs = loaded
-                message = programs.isEmpty ? "这一天没有可用的节目单。" : nil
+                message = programs.isEmpty ? "无有效节目单" : nil
             } catch is CancellationError {
                 return
             } catch {
                 guard !Task.isCancelled else { return }
-                message = error.localizedDescription
+                message = "无有效节目单"
             }
             guard !Task.isCancelled else { return }
             isLoading = false

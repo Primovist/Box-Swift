@@ -1439,7 +1439,7 @@ struct PlayerScreen: View {
 
     private func handlePlaybackDidReachEnd(_ reachedEnd: Bool) {
         guard reachedEnd, autoNextEpisode, !session.request.isLive, session.request.liveContext == nil,
-              session.request.queueIndex + 1 < session.request.queue.count else { return }
+              queueNavigationIndex + 1 < session.request.queue.count else { return }
         moveToEpisode(1)
     }
 
@@ -1924,24 +1924,24 @@ struct PlayerScreen: View {
         HStack(spacing: 12) {
             if session.canSeekByTime {
                 controlButton(title: "后退 15 秒", systemImage: "gobackward.15") { session.seek(by: -15) }
-            } else {
+            } else if showsQueueNavigation {
                 controlButton(
                     title: liveContext == nil ? "上一集" : "上一频道",
                     systemImage: "backward.end.fill"
                 ) { moveToEpisode(-1) }
-                    .disabled(session.request.queueIndex == 0 || isSwitchingEpisode)
+                    .disabled(queueNavigationIndex == 0 || isSwitchingEpisode)
             }
 
             portraitPlaybackToggle
 
             if session.canSeekByTime {
                 controlButton(title: "前进 15 秒", systemImage: "goforward.15") { session.seek(by: 15) }
-            } else {
+            } else if showsQueueNavigation {
                 controlButton(
                     title: liveContext == nil ? "下一集" : "下一频道",
                     systemImage: "forward.end.fill"
                 ) { moveToEpisode(1) }
-                    .disabled(session.request.queueIndex + 1 >= session.request.queue.count || isSwitchingEpisode)
+                    .disabled(queueNavigationIndex + 1 >= session.request.queue.count || isSwitchingEpisode)
             }
         }
     }
@@ -3160,7 +3160,7 @@ struct PlayerScreen: View {
         }
         guard !context.epgURL.isEmpty, let channel = context.currentChannel else {
             livePrograms = []
-            liveGuideMessage = "当前配置没有提供节目单地址。"
+            liveGuideMessage = "无有效节目单"
             isLoadingLiveGuide = false
             return
         }
@@ -3170,13 +3170,13 @@ struct PlayerScreen: View {
             let values = try await CatalogService().loadEPG(for: channel.name, template: context.epgURL, date: liveGuideDate)
             guard !Task.isCancelled else { return }
             livePrograms = values
-            if values.isEmpty { liveGuideMessage = "这一天没有可用的节目单。" }
+            if values.isEmpty { liveGuideMessage = "无有效节目单" }
         } catch is CancellationError {
             return
         } catch {
             guard !Task.isCancelled else { return }
             livePrograms = []
-            liveGuideMessage = error.localizedDescription
+            liveGuideMessage = "无有效节目单"
         }
         guard !Task.isCancelled else { return }
         isLoadingLiveGuide = false
@@ -3370,8 +3370,10 @@ struct PlayerScreen: View {
 
     private var transportControls: some View {
         HStack(spacing: 12) {
-            controlButton(title: session.request.isLive ? "上一频道" : "上一集", systemImage: "backward.end.fill") { moveToEpisode(-1) }
-                .disabled(session.request.queueIndex == 0 || isSwitchingEpisode)
+            if showsQueueNavigation {
+                controlButton(title: session.request.isLive ? "上一频道" : "上一集", systemImage: "backward.end.fill") { moveToEpisode(-1) }
+                    .disabled(queueNavigationIndex == 0 || isSwitchingEpisode)
+            }
             controlButton(title: "后退 15 秒", systemImage: "gobackward.15") { session.seek(by: -15) }
                 .disabled(!session.canSeekByTime)
             Button {
@@ -3389,8 +3391,10 @@ struct PlayerScreen: View {
             .accessibilityLabel(session.isPlaying ? "暂停" : "播放")
             controlButton(title: "前进 15 秒", systemImage: "goforward.15") { session.seek(by: 15) }
                 .disabled(!session.canSeekByTime)
-            controlButton(title: session.request.isLive ? "下一频道" : "下一集", systemImage: "forward.end.fill") { moveToEpisode(1) }
-                .disabled(session.request.queueIndex + 1 >= session.request.queue.count || isSwitchingEpisode)
+            if showsQueueNavigation {
+                controlButton(title: session.request.isLive ? "下一频道" : "下一集", systemImage: "forward.end.fill") { moveToEpisode(1) }
+                    .disabled(queueNavigationIndex + 1 >= session.request.queue.count || isSwitchingEpisode)
+            }
         }
         #if os(tvOS)
         .focusSection()
@@ -3894,7 +3898,7 @@ struct PlayerScreen: View {
 
     private func selectVodEpisode(_ episode: Episode, at index: Int) {
         let current = session.request
-        guard index != current.queueIndex,
+        guard index != queueNavigationIndex(for: current),
               let item = current.item,
               !isSwitchingEpisode else { return }
         isSwitchingEpisode = true
@@ -3934,7 +3938,7 @@ struct PlayerScreen: View {
 
     private func moveToEpisode(_ offset: Int) {
         let current = session.request
-        let targetIndex = current.queueIndex + offset
+        let targetIndex = queueNavigationIndex(for: current) + offset
         guard current.queue.indices.contains(targetIndex) else { return }
         let episode = current.queue[targetIndex]
         if let context = current.liveContext,
@@ -3966,6 +3970,28 @@ struct PlayerScreen: View {
             return
         }
         selectVodEpisode(episode, at: targetIndex)
+    }
+
+    private var queueNavigationIndex: Int {
+        queueNavigationIndex(for: session.request)
+    }
+
+    private var showsQueueNavigation: Bool {
+        if session.request.liveContext != nil { return session.request.queue.count > 1 }
+        let category = session.request.item?.category.lowercased() ?? ""
+        let isMovie = ["电影", "剧场版", "movie", "film"].contains { category.contains($0) }
+        return !isMovie && session.request.queue.count > 1
+    }
+
+    private func queueNavigationIndex(for request: PlaybackRequest) -> Int {
+        let currentEpisodeID = request.liveContext.map {
+            "live::\($0.groupID)::\($0.channelID)"
+        } ?? request.episodeID
+        if let currentEpisodeID,
+           let index = request.queue.firstIndex(where: { $0.id == currentEpisodeID }) {
+            return index
+        }
+        return request.queue.indices.contains(request.queueIndex) ? request.queueIndex : 0
     }
 
     private func persistPlaybackPosition() {
