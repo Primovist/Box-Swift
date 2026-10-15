@@ -3,6 +3,7 @@ import Combine
 import VLCKit
 #if os(iOS)
 import UIKit
+import AVKit
 import MediaPlayer
 import AVFAudio
 #endif
@@ -100,6 +101,18 @@ private struct SystemVolumeControl: UIViewRepresentable {
     func updateUIView(_ volumeView: MPVolumeView, context: Context) {
         controller.attach(to: volumeView)
     }
+}
+
+private struct SystemRoutePicker: UIViewRepresentable {
+    func makeUIView(context: Context) -> AVRoutePickerView {
+        let routePicker = AVRoutePickerView(frame: .zero)
+        routePicker.tintColor = .white
+        routePicker.activeTintColor = .white
+        routePicker.prioritizesVideoDevices = true
+        return routePicker
+    }
+
+    func updateUIView(_ routePicker: AVRoutePickerView, context: Context) {}
 }
 #endif
 
@@ -1010,6 +1023,7 @@ struct PlayerScreen: View {
     @State private var isSwitchingEpisode = false
     @State private var vodSelectionTask: Task<Void, Never>?
     @State private var errorMessage: String?
+    @State private var portraitLibraryErrorMessage: String?
     @State private var playerMenuTitle = ""
     @State private var playerMenuOptions: [PlayerMenuOption] = []
     @State private var showingPlayerMenu = false
@@ -1027,9 +1041,11 @@ struct PlayerScreen: View {
     @State private var danmakuAPIWhenSettingsOpened = ""
     @State private var danmakuSearchPlaybackGeneration: Int?
     @State private var showingDanmakuSettings = false
+    @State private var isShowingPortraitLibrary = false
     @State private var skipNextDanmakuEnableReload = false
     @State private var areControlsVisible = true
     @State private var controlsHideTask: Task<Void, Never>?
+    @State private var controlsRevealTask: Task<Void, Never>?
     @State private var interactionHUDMessage: String?
     @State private var interactionHUDSymbol = "sun.max.fill"
     @State private var interactionHUDTask: Task<Void, Never>?
@@ -1067,8 +1083,7 @@ struct PlayerScreen: View {
         return "\(liveContext.groupID)|\(liveContext.channelID)|\(liveGuideDate.timeIntervalSince1970)"
     }
     #if os(tvOS)
-    @FocusState private var playControlFocused: Bool
-    @FocusState private var progressFocused: Bool
+    @FocusState private var focusedOverlayControl: String?
     @FocusState private var playerSurfaceFocused: Bool
     @FocusState private var livePanelFocusTarget: String?
     @State private var pendingVodFocusID: String?
@@ -1087,116 +1102,44 @@ struct PlayerScreen: View {
             #endif
             ZStack {
                 Color.black.ignoresSafeArea()
-                VStack(spacing: 0) {
-                    ZStack {
-                        VLCVideoSurface(session: session)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .allowsHitTesting(false)
-                            .zIndex(0)
-                        DanmakuOverlay(clock: session.danmakuClock, comments: danmakuComments, generation: danmakuGeneration)
-                            .id("\(session.playbackGeneration)-\(danmakuGeneration)")
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .allowsHitTesting(false)
-                            .zIndex(1)
-                        #if os(iOS)
-                        GeometryReader { interaction in
-                            touchInteractionLayer(size: interaction.size, isPortraitLayout: isPortraitLayout)
-                        }
+                ZStack {
+                    VLCVideoSurface(session: session)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(false)
+                        .zIndex(0)
+                    DanmakuOverlay(clock: session.danmakuClock, comments: danmakuComments, generation: danmakuGeneration)
+                        .id("\(session.playbackGeneration)-\(danmakuGeneration)")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(false)
                         .zIndex(1)
-                        #endif
+                    #if os(iOS)
+                    GeometryReader { interaction in
+                        touchInteractionLayer(
+                            size: interaction.size,
+                            isPortraitLayout: isPortraitLayout,
+                            closeEdgeWidth: max(28, geometry.safeAreaInsets.leading + 18)
+                        )
+                    }
+                    .zIndex(1)
+                    #endif
 
-                        if areControlsVisible {
-                            Group {
-                                #if os(iOS)
-                                if isPortraitLayout {
-                                    VStack(spacing: 0) {
-                                        header
-                                        Spacer(minLength: 0)
-                                        if session.status == "播放失败" { failureCard }
-                                        Spacer(minLength: 0)
-                                    }
-                                    .padding(.horizontal, playerPadding(compact: true))
-                                    .padding(.top, playerPadding(compact: true))
-                                } else {
-                                    VStack(spacing: 0) {
-                                        header
-                                        Spacer(minLength: 22)
-                                        if session.status == "播放失败" { failureCard }
-                                        Spacer(minLength: 22)
-                                        controlPanel(compact: geometry.size.width < 600)
-                                    }
-                                    .padding(.leading, playerPadding(compact: geometry.size.width < 600) + geometry.safeAreaInsets.leading)
-                                    .padding(.trailing, playerPadding(compact: geometry.size.width < 600) + geometry.safeAreaInsets.trailing)
-                                    .padding(.top, playerPadding(compact: geometry.size.width < 600))
-                                    .padding(.bottom, playerPadding(compact: geometry.size.width < 600))
-                                }
-                                #else
-                                VStack(spacing: 0) {
-                                    header
-                                    Spacer(minLength: 22)
-                                    if session.status == "播放失败" { failureCard }
-                                    Spacer(minLength: 22)
-                                    controlPanel(compact: geometry.size.width < 600)
-                                }
-                                .padding(.leading, max(playerPadding(compact: geometry.size.width < 600), geometry.safeAreaInsets.leading))
-                                .padding(.trailing, max(playerPadding(compact: geometry.size.width < 600), geometry.safeAreaInsets.trailing))
-                                .padding(.top, max(playerPadding(compact: geometry.size.width < 600), geometry.safeAreaInsets.top))
-                                .padding(.bottom, max(playerPadding(compact: geometry.size.width < 600), geometry.safeAreaInsets.bottom))
-                                #endif
-                            }
+                    if areControlsVisible {
+                        controlsOverlay(in: geometry, isPortrait: isPortraitLayout)
                             .transition(session.request.liveContext != nil && !isPortraitLayout ? .identity : .opacity)
                             .zIndex(2)
-                        }
-
-                        if !isPortraitLayout, let landscapeLivePanel {
-                            liveLandscapePanel(
-                                landscapeLivePanel,
-                                size: geometry.size,
-                                safeAreaInsets: geometry.safeAreaInsets
-                            )
-                                .zIndex(3)
-                        }
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .frame(height: isPortraitLayout && (liveContext != nil || session.request.item != nil) ? geometry.size.width * 9 / 16 : nil)
 
-                    #if os(iOS)
-                    if isPortraitLayout {
-                        if liveContext != nil {
-                            if areControlsVisible {
-                                controlPanel(compact: true)
-                                    .padding(.horizontal, playerPadding(compact: true))
-                                    .padding(.top, 8)
-                            }
-                            livePortraitPanels
-                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        } else if let item = session.request.item {
-                            if areControlsVisible {
-                                controlPanel(compact: true)
-                                    .padding(.horizontal, playerPadding(compact: true))
-                                    .padding(.top, 8)
-                            }
-                            GeometryReader { detailsArea in
-                                vodPortraitDetails(item, minimumHeight: detailsArea.size.height)
-                            }
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        } else {
-                            VStack(spacing: 0) {
-                                Spacer(minLength: 0)
-                                controlPanel(compact: true)
-                            }
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .padding(.horizontal, playerPadding(compact: true))
-                            .padding(.top, 10)
-                            .padding(.bottom, playerPadding(compact: true))
-                                .opacity(areControlsVisible ? 1 : 0)
-                                .allowsHitTesting(areControlsVisible)
-                                .accessibilityHidden(!areControlsVisible)
-                        }
+                    if !isPortraitLayout, let landscapeLivePanel {
+                        liveLandscapePanel(
+                            landscapeLivePanel,
+                            size: geometry.size,
+                            safeAreaInsets: geometry.safeAreaInsets
+                        )
+                            .zIndex(3)
                     }
-                    #endif
                 }
-                .ignoresSafeArea(edges: isPortraitLayout ? [] : .all)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .ignoresSafeArea(edges: .all)
                 .zIndex(0)
                 #if os(iOS)
                 SystemVolumeControl(controller: systemVolumeController)
@@ -1248,10 +1191,8 @@ struct PlayerScreen: View {
                 DragGesture(minimumDistance: 12, coordinateSpace: .local)
                     .onEnded { value in
                         let delta = value.translation
-                        let videoHeight = geometry.size.width * 9 / 16
                         guard isPortraitLayout,
                               (liveContext != nil || session.request.item != nil),
-                              value.startLocation.y >= videoHeight,
                               value.startLocation.x <= max(28, geometry.safeAreaInsets.leading + 18),
                               delta.width >= 90,
                               abs(delta.height) < 100,
@@ -1262,6 +1203,9 @@ struct PlayerScreen: View {
             #endif
             .foregroundStyle(.white)
         }
+        #if os(iOS)
+        .statusBarHidden(true)
+        #endif
         .onAppear {
             let option = Self.aspectRatios.first { $0.value == savedAspectRatio }
             session.setAspectRatio(option?.value.isEmpty == false ? option?.value : nil, label: option?.label ?? "原始")
@@ -1269,7 +1213,7 @@ struct PlayerScreen: View {
             session.play()
             loadEpisodeDanmaku()
             #if os(tvOS)
-            playControlFocused = true
+            focusedOverlayControl = "play"
             #endif
         }
         .task(id: liveGuideTaskKey) {
@@ -1279,6 +1223,7 @@ struct PlayerScreen: View {
             persistPlaybackPosition()
             danmakuTask?.cancel()
             controlsHideTask?.cancel()
+            controlsRevealTask?.cancel()
             interactionHUDTask?.cancel()
             vodSelectionTask?.cancel()
             vodSelectionTask = nil
@@ -1330,42 +1275,53 @@ struct PlayerScreen: View {
                 skipNextDanmakuEnableReload = false
             }
         }
-        .onChange(of: session.isPlaying) { _, playing in
-            if playing {
-                revealControls()
-            } else {
+        .onChange(of: session.isPlaying) { _, _ in
+            refreshControls()
+        }
+        #if os(tvOS)
+        .onChange(of: session.status) { previousStatus, status in
+            if status == "播放失败" {
                 controlsHideTask?.cancel()
                 withAnimation(.easeInOut(duration: 0.2)) { areControlsVisible = true }
+                landscapeLivePanel = nil
+                focusedOverlayControl = nil
+                restorePrimaryControlFocus()
+            } else if previousStatus == "播放失败" {
+                focusedOverlayControl = nil
+                restorePrimaryControlFocus()
             }
         }
+        .onChange(of: focusedOverlayControl) { _, focusedControl in
+            if focusedControl != nil && areControlsVisible { refreshControls() }
+        }
+        #endif
         .onChange(of: isScrubbing) { _, scrubbing in
-            if scrubbing {
+            if scrubbing { controlsHideTask?.cancel() }
+            else { refreshControls() }
+        }
+        .onChange(of: isPlayerPresentationActive) { _, active in
+            if active {
                 controlsHideTask?.cancel()
             } else {
-                revealControls()
+                refreshControls()
+                #if os(tvOS)
+                restorePrimaryControlFocus()
+                #endif
             }
         }
         .onChange(of: showingDanmakuSearch) { _, showing in
-            if showing { controlsHideTask?.cancel() }
-            else {
-                if resumePlaybackAfterDanmakuSearch {
-                    resumePlaybackAfterDanmakuSearch = false
-                    session.play()
-                    revealControls()
-                }
+            if !showing && resumePlaybackAfterDanmakuSearch {
+                resumePlaybackAfterDanmakuSearch = false
+                session.play()
             }
         }
         .onChange(of: showingDanmakuSettings) { _, showing in
             if showing {
                 danmakuAPIWhenSettingsOpened = danmakuAPIAddress
-                controlsHideTask?.cancel()
             } else {
                 if resumePlaybackAfterDanmakuSettings {
                     resumePlaybackAfterDanmakuSettings = false
                     session.play()
-                    revealControls()
-                } else if session.isPlaying {
-                    revealControls()
                 }
                 if danmakuEnabled, danmakuAPIWhenSettingsOpened != danmakuAPIAddress {
                     loadEpisodeDanmaku()
@@ -1373,22 +1329,15 @@ struct PlayerScreen: View {
             }
         }
         .onChange(of: showingPlayerMenu) { _, showing in
-            if showing { controlsHideTask?.cancel() }
-            else if resumePlaybackAfterPlayerMenu {
+            if !showing && resumePlaybackAfterPlayerMenu {
                 resumePlaybackAfterPlayerMenu = false
                 session.play()
-                revealControls()
-            } else if session.isPlaying {
-                revealControls()
             }
         }
         .onChange(of: showingSubtitleTracks) { _, showing in
-            if showing {
-                controlsHideTask?.cancel()
-            } else if resumePlaybackAfterSubtitleSelection {
+            if !showing && resumePlaybackAfterSubtitleSelection {
                 resumePlaybackAfterSubtitleSelection = false
                 session.play()
-                revealControls()
             }
         }
         .alert("无法开始播放", isPresented: Binding(
@@ -1425,6 +1374,41 @@ struct PlayerScreen: View {
             DanmakuSettingsSheet()
         }
         #if os(iOS)
+        .sheet(isPresented: $isShowingPortraitLibrary) {
+            NavigationStack {
+                GeometryReader { sheetGeometry in
+                    Group {
+                        if liveContext != nil {
+                            livePortraitPanels
+                        } else if let item = session.request.item {
+                            vodPortraitDetails(item, minimumHeight: sheetGeometry.size.height)
+                        } else {
+                            ContentUnavailableView("没有可浏览的内容", systemImage: "list.bullet")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("完成") { isShowingPortraitLibrary = false }
+                    }
+                }
+                .navigationTitle(liveContext == nil ? "选集与片源" : "频道与节目")
+                .navigationBarTitleDisplayMode(.inline)
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            .alert("无法开始播放", isPresented: Binding(
+                get: { portraitLibraryErrorMessage != nil },
+                set: { if !$0 { portraitLibraryErrorMessage = nil } }
+            )) {
+                Button("好", role: .cancel) { portraitLibraryErrorMessage = nil }
+            } message: {
+                Text(portraitLibraryErrorMessage ?? "")
+            }
+        }
+        #endif
+        #if os(iOS)
         .confirmationDialog("选择字幕", isPresented: $showingSubtitleTracks, titleVisibility: .visible) {
             ForEach(session.subtitleTracks) { option in
                 Button(option.index == session.selectedSubtitleTrackIndex ? "✓  \(option.title)" : option.title) {
@@ -1455,7 +1439,11 @@ struct PlayerScreen: View {
     }
 
     #if os(iOS)
-    private func touchInteractionLayer(size: CGSize, isPortraitLayout: Bool) -> some View {
+    private func touchInteractionLayer(
+        size: CGSize,
+        isPortraitLayout: Bool,
+        closeEdgeWidth: CGFloat
+    ) -> some View {
         Color.clear
             .contentShape(Rectangle())
             .gesture(
@@ -1493,7 +1481,7 @@ struct PlayerScreen: View {
             .simultaneousGesture(
                 DragGesture(minimumDistance: 12, coordinateSpace: .local)
                     .onChanged { value in
-                        handlePlayerDrag(value, size: size)
+                        handlePlayerDrag(value, size: size, isPortraitLayout: isPortraitLayout, closeEdgeWidth: closeEdgeWidth)
                     }
                     .onEnded { _ in
                         finishPlayerDrag()
@@ -1523,9 +1511,23 @@ struct PlayerScreen: View {
         revealControls()
     }
 
-    private func handlePlayerDrag(_ value: DragGesture.Value, size: CGSize) {
+    private func handlePlayerDrag(
+        _ value: DragGesture.Value,
+        size: CGSize,
+        isPortraitLayout: Bool,
+        closeEdgeWidth: CGFloat
+    ) {
         controlsHideTask?.cancel()
         let translation = value.translation
+        let isClosingFromLeftEdge = isPortraitLayout
+            && value.startLocation.x <= closeEdgeWidth
+            && translation.width > 0
+            && translation.width > abs(translation.height)
+        if isClosingFromLeftEdge {
+            if touchGesture == .seek { isScrubbing = false }
+            touchGesture = .ignored
+            return
+        }
         if touchGesture == nil {
             if abs(translation.width) >= abs(translation.height) {
                 guard session.canSeek else {
@@ -1631,45 +1633,78 @@ struct PlayerScreen: View {
         }
     }
 
+    private var isPlayerPresentationActive: Bool {
+        showingPlayerMenu || showingSubtitleTracks || showingDanmakuSearch
+            || showingDanmakuSettings || isShowingPortraitLibrary || errorMessage != nil
+    }
+
+    private var canAutoHideControls: Bool {
+        session.isPlaying && landscapeLivePanel == nil && !isPlayerPresentationActive
+            && !isScrubbing && touchGesture == nil
+    }
+
     @MainActor
     private func revealControls() {
+        controlsRevealTask?.cancel()
         if landscapeLivePanel != nil {
             controlsHideTask?.cancel()
             withAnimation(.easeInOut(duration: 0.2)) { landscapeLivePanel = nil }
-            Task { @MainActor in
+            controlsRevealTask = Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 220_000_000)
-                guard landscapeLivePanel == nil else { return }
-                revealControls()
+                guard !Task.isCancelled, landscapeLivePanel == nil else { return }
+                controlsRevealTask = nil
+                refreshControls()
             }
-            return
+        } else {
+            controlsRevealTask = nil
+            refreshControls()
         }
-        let wasHidden = !areControlsVisible
-        withAnimation(.easeInOut(duration: 0.2)) { areControlsVisible = true }
+    }
+
+    @MainActor
+    private func refreshControls() {
         controlsHideTask?.cancel()
-        #if os(tvOS)
-        playerSurfaceFocused = false
+        controlsHideTask = nil
+        guard landscapeLivePanel == nil, !isPlayerPresentationActive else { return }
+        let wasHidden = !areControlsVisible
         if wasHidden {
-            Task { @MainActor in
-                await Task.yield()
-                if areControlsVisible { playControlFocused = true }
-            }
+            withAnimation(.easeInOut(duration: 0.2)) { areControlsVisible = true }
         }
+        #if os(tvOS)
+        let hideDelay: UInt64 = 15_000_000_000
+        playerSurfaceFocused = false
+        if wasHidden { restorePrimaryControlFocus() }
+        #else
+        let hideDelay: UInt64 = 8_000_000_000
         #endif
-        guard landscapeLivePanel == nil else { return }
-        guard session.isPlaying else { return }
+        guard canAutoHideControls else { return }
         controlsHideTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 8_000_000_000)
-            guard !Task.isCancelled, session.isPlaying, !isScrubbing, touchGesture == nil else { return }
+            try? await Task.sleep(nanoseconds: hideDelay)
+            guard !Task.isCancelled, canAutoHideControls else { return }
+            controlsHideTask = nil
             withAnimation(.easeInOut(duration: 0.25)) { areControlsVisible = false }
             #if os(tvOS)
-            playControlFocused = false
-            Task { @MainActor in
-                await Task.yield()
-                if !areControlsVisible { playerSurfaceFocused = true }
+            focusedOverlayControl = nil
+            await Task.yield()
+            if !Task.isCancelled, !areControlsVisible, landscapeLivePanel == nil {
+                playerSurfaceFocused = true
             }
             #endif
         }
     }
+
+    #if os(tvOS)
+    @MainActor
+    private func restorePrimaryControlFocus() {
+        Task { @MainActor in
+            await Task.yield()
+            guard areControlsVisible,
+                  landscapeLivePanel == nil,
+                  !isPlayerPresentationActive else { return }
+            focusedOverlayControl = session.status == "播放失败" ? "retry" : "play"
+        }
+    }
+    #endif
 
     #if os(iOS)
     @MainActor
@@ -1685,43 +1720,187 @@ struct PlayerScreen: View {
     }
     #endif
 
-    private var header: some View {
-        HStack(spacing: 14) {
-            Button { closePlayer() } label: {
+    @ViewBuilder
+    private func controlsOverlay(in geometry: GeometryProxy, isPortrait: Bool) -> some View {
+        #if os(iOS)
+        if isPortrait {
+            VStack(spacing: 0) {
+                playerHeader(isPortrait: true)
+                Spacer(minLength: 30)
+                primaryPlaybackControls
+                Spacer(minLength: 24)
+                portraitBottomControls
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, max(12, geometry.safeAreaInsets.top + 8))
+            .padding(.bottom, max(16, geometry.safeAreaInsets.bottom + 8))
+        } else {
+            landscapeControls(safeAreaInsets: geometry.safeAreaInsets)
+        }
+        #else
+        landscapeControls(safeAreaInsets: geometry.safeAreaInsets)
+        #endif
+    }
+
+    private func landscapeControls(safeAreaInsets: EdgeInsets) -> some View {
+        VStack(spacing: 0) {
+            playerHeader(isPortrait: false)
+            Spacer(minLength: TVBoxTypography.readable(8, minimum: 12))
+            primaryPlaybackControls
+            Spacer(minLength: TVBoxTypography.readable(10, minimum: 16))
+            landscapeBottomControls
+        }
+        #if os(iOS)
+        .padding(.leading, playerPadding(compact: true) + safeAreaInsets.leading)
+        .padding(.trailing, playerPadding(compact: true) + safeAreaInsets.trailing)
+        .padding(.top, max(10, safeAreaInsets.top + 6))
+        .padding(.bottom, max(10, safeAreaInsets.bottom + 6))
+        #else
+        .padding(.leading, max(playerPadding(compact: false), safeAreaInsets.leading))
+        .padding(.trailing, max(playerPadding(compact: false), safeAreaInsets.trailing))
+        .padding(.top, max(36, safeAreaInsets.top))
+        .padding(.bottom, max(36, safeAreaInsets.bottom))
+        #endif
+    }
+
+    @ViewBuilder
+    private var primaryPlaybackControls: some View {
+        if session.status == "播放失败" { failureCard }
+        else { transportControls }
+    }
+
+    private func playerHeader(isPortrait: Bool) -> some View {
+        HStack(spacing: TVBoxTypography.readable(12, minimum: 28)) {
+            Button(action: closePlayer) {
+                #if os(iOS)
+                Image(systemName: "xmark")
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: 46, height: 46)
+                    .contentShape(Circle())
+                #else
                 Label("返回", systemImage: "chevron.left")
-                    .font(.system(size: TVBoxTypography.readable(14), weight: .semibold))
+                    .font(.system(size: TVBoxTypography.readable(14, minimum: 28), weight: .semibold))
                     .padding(.horizontal, TVBoxTypography.readable(15, minimum: 24))
                     .padding(.vertical, TVBoxTypography.readable(11, minimum: 18))
+                #endif
             }
             .playerControlButtonStyle()
-            .accessibilityHint("关闭播放器并返回详情")
+            .accessibilityLabel("关闭播放器")
+            #if os(tvOS)
+            .focused($focusedOverlayControl, equals: "close")
+            #endif
             Spacer(minLength: 10)
+            #if os(tvOS)
             Text(session.title)
-                .font(.system(size: TVBoxTypography.readable(15)))
+                .font(.system(size: TVBoxTypography.readable(15, minimum: 30)))
                 .lineLimit(1)
                 .padding(.horizontal, 15)
                 .padding(.vertical, 11)
                 .background(.black.opacity(0.48), in: Capsule())
-#if os(tvOS)
             if liveContext != nil {
                 Button { toggleLivePanel(.guide) } label: {
                     Label("节目单", systemImage: "list.bullet.rectangle")
                 }
                 .playerControlButtonStyle()
+                .focused($focusedOverlayControl, equals: "guide")
                 .accessibilityLabel("显示节目单")
                 Button { toggleLivePanel(.sources) } label: {
                     Label("线路", systemImage: "antenna.radiowaves.left.and.right")
                 }
                 .playerControlButtonStyle()
+                .focused($focusedOverlayControl, equals: "sources")
                 .accessibilityLabel("显示可切换线路")
             } else if session.request.item != nil {
                 Button { toggleLivePanel(.playlist) } label: {
                     Label("片源/选集", systemImage: "list.bullet.rectangle")
                 }
                 .playerControlButtonStyle()
+                .focused($focusedOverlayControl, equals: "playlist")
                 .accessibilityLabel("显示片源和选集")
             }
-#endif
+            #else
+            if session.isPictureInPictureReady {
+                Button { session.startPictureInPicture() } label: {
+                    trackMenuLabel(title: "画中画", systemImage: "pip.enter")
+                }
+                .playerControlButtonStyle()
+                .accessibilityLabel("开始画中画播放")
+            }
+            if liveContext != nil || session.request.item != nil {
+                Button {
+                    if isPortrait { isShowingPortraitLibrary = true }
+                    else { toggleLivePanel(liveContext == nil ? .playlist : .guide) }
+                } label: {
+                    trackMenuLabel(title: liveContext == nil ? "选集" : "频道", systemImage: "list.bullet.rectangle")
+                }
+                .playerControlButtonStyle()
+                .accessibilityLabel(liveContext == nil ? "打开选集与片源" : "打开频道与节目")
+            }
+            SystemRoutePicker()
+                .frame(width: 46, height: 46)
+                .glassEffect(.regular, in: Circle())
+                .accessibilityLabel("选择输出设备")
+            #endif
+        }
+        #if os(tvOS)
+        .focusSection()
+        #endif
+    }
+
+    #if os(iOS)
+    private var portraitBottomControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                if let item = session.request.item, item.title != session.title {
+                    Text(item.title)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.72))
+                        .lineLimit(1)
+                }
+                Text(session.title)
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                if let item = session.request.item {
+                    let metadata = [item.category, item.year, item.remarks].filter { !$0.isEmpty }
+                    if !metadata.isEmpty {
+                        Text(metadata.joined(separator: " · "))
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.62))
+                            .lineLimit(1)
+                    }
+                } else if let source = liveContext?.currentSource {
+                    Text(source.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.62))
+                        .lineLimit(1)
+                }
+            }
+            controlPanel(compact: true)
+        }
+    }
+
+    #endif
+
+    private var landscapeBottomControls: some View {
+        VStack(alignment: .leading, spacing: TVBoxTypography.readable(8, minimum: 16)) {
+            VStack(alignment: .leading, spacing: TVBoxTypography.readable(2, minimum: 6)) {
+                if let item = session.request.item, item.title != session.title {
+                    Text(item.title)
+                        .font(.system(size: TVBoxTypography.readable(13, minimum: 26), weight: .medium))
+                        .foregroundStyle(.white.opacity(0.72))
+                        .lineLimit(1)
+                }
+                Text(session.title)
+                    .font(.system(size: TVBoxTypography.readable(17, minimum: 34), weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+            }
+            #if os(iOS)
+            controlPanel(compact: true, showsStatus: false)
+            #else
+            controlPanel(compact: false, showsStatus: false)
+            #endif
         }
     }
 
@@ -2731,12 +2910,21 @@ struct PlayerScreen: View {
     }
 
     private func toggleLivePanel(_ panel: LivePlayerPanel) {
+        controlsRevealTask?.cancel()
+        controlsRevealTask = nil
         if landscapeLivePanel == panel {
             controlsHideTask?.cancel()
             withAnimation(.easeInOut(duration: 0.2)) {
                 landscapeLivePanel = nil
                 areControlsVisible = false
             }
+            #if os(tvOS)
+            Task { @MainActor in
+                await Task.yield()
+                guard landscapeLivePanel == nil, !areControlsVisible else { return }
+                playerSurfaceFocused = true
+            }
+            #endif
         } else {
             controlsHideTask?.cancel()
             if panel == .guide, let currentGroupID = liveContext?.groupID {
@@ -2770,20 +2958,25 @@ struct PlayerScreen: View {
                 .foregroundStyle(.orange)
             Text("无法播放此地址")
                 .font(.system(size: TVBoxTypography.readable(20), weight: .bold, design: .rounded))
-            Button("重试") { session.retry() }
-                .buttonStyle(.borderedProminent)
+            Button { session.retry() } label: {
+                Text("重试")
+                    .frame(minWidth: 72, minHeight: 44)
+            }
+            .playerControlButtonStyle(isAccent: true)
+            #if os(tvOS)
+            .focused($focusedOverlayControl, equals: "retry")
+            #endif
         }
         .padding(22)
         .frame(maxWidth: 520)
         .background(.black.opacity(0.76), in: RoundedRectangle(cornerRadius: 22))
     }
 
-    private func controlPanel(compact: Bool, includesTransportControls: Bool = true) -> some View {
+    private func controlPanel(
+        compact: Bool,
+        showsStatus: Bool = true
+    ) -> some View {
         VStack(spacing: compact ? 10 : 13) {
-            if includesTransportControls {
-                transportControls(compact: compact)
-            }
-
             HStack(spacing: compact ? 8 : 12) {
                 Text(isScrubbing ? Self.clockString(fraction: seekValue, duration: session.durationText) : session.elapsedText)
                     .font(.system(size: TVBoxTypography.readable(11, minimum: 23), weight: .medium, design: .monospaced))
@@ -2804,7 +2997,7 @@ struct PlayerScreen: View {
                         session.seek(to: seekValue)
                     }
                 })
-                .tint(Color.tvboxAccent)
+                .tint(.white)
                 .disabled(!session.canSeek)
                 #endif
                 Text(session.durationText)
@@ -2818,10 +3011,20 @@ struct PlayerScreen: View {
                     aspectRatioMenu
                     ScrollView(.horizontal, showsIndicators: false) { additionalPlaybackOptions }
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                #if os(iOS)
+                .glassEffect(.regular, in: Capsule())
+                #endif
             } else {
                 playbackOptions
+                    #if os(iOS)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .glassEffect(.regular, in: Capsule())
+                    #endif
             }
-            if compact {
+            if compact && showsStatus {
                 Text(isSwitchingEpisode ? "正在切换剧集…" : session.status)
                     .font(.system(size: TVBoxTypography.readable(11, minimum: 23), weight: .medium))
                     .foregroundStyle(.white.opacity(0.78))
@@ -2831,10 +3034,8 @@ struct PlayerScreen: View {
         .padding(.horizontal, compact ? 13 : 18)
         .padding(.vertical, compact ? 12 : 15)
         #if os(tvOS)
-        .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: compact ? 18 : 22, style: .continuous))
-        #else
-        .background(.black.opacity(0.68), in: RoundedRectangle(cornerRadius: compact ? 18 : 22, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: compact ? 18 : 22).strokeBorder(.white.opacity(0.09), lineWidth: 1))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: compact ? 22 : 28, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: compact ? 22 : 28, style: .continuous).strokeBorder(.white.opacity(0.14), lineWidth: 1))
         #endif
         .simultaneousGesture(TapGesture().onEnded { revealControls() })
         #if os(tvOS)
@@ -2842,12 +3043,10 @@ struct PlayerScreen: View {
         #endif
     }
 
-    private func transportControls(compact: Bool, centered: Bool = false) -> some View {
-        HStack(spacing: compact ? 7 : 12) {
-            if session.request.queueIndex > 0 {
-                controlButton(title: session.request.isLive ? "上一频道" : "上一集", systemImage: "backward.end.fill") { moveToEpisode(-1) }
-                    .disabled(isSwitchingEpisode)
-            }
+    private var transportControls: some View {
+        HStack(spacing: 12) {
+            controlButton(title: session.request.isLive ? "上一频道" : "上一集", systemImage: "backward.end.fill") { moveToEpisode(-1) }
+                .disabled(session.request.queueIndex == 0 || isSwitchingEpisode)
             controlButton(title: "后退 15 秒", systemImage: "gobackward.15") { session.seek(by: -15) }
                 .disabled(!session.canSeekByTime)
             Button {
@@ -2855,31 +3054,22 @@ struct PlayerScreen: View {
                 session.togglePlayback()
             } label: {
                 Image(systemName: session.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: TVBoxTypography.readable(compact ? 20 : 18, minimum: 32), weight: .bold))
-                    .frame(width: TVBoxTypography.readable(compact ? 60 : 52, minimum: 88), height: TVBoxTypography.readable(compact ? 60 : 52, minimum: 88))
+                    .font(.system(size: TVBoxTypography.readable(27, minimum: 32), weight: .bold))
+                    .frame(width: TVBoxTypography.readable(76, minimum: 88), height: TVBoxTypography.readable(76, minimum: 88))
             }
             .playerControlButtonStyle(isAccent: true)
             #if os(tvOS)
-            .focused($playControlFocused)
+            .focused($focusedOverlayControl, equals: "play")
             #endif
             .accessibilityLabel(session.isPlaying ? "暂停" : "播放")
             controlButton(title: "前进 15 秒", systemImage: "goforward.15") { session.seek(by: 15) }
                 .disabled(!session.canSeekByTime)
-            if session.request.queueIndex + 1 < session.request.queue.count {
-                controlButton(title: session.request.isLive ? "下一频道" : "下一集", systemImage: "forward.end.fill") { moveToEpisode(1) }
-                    .disabled(isSwitchingEpisode)
-            }
-            if !compact {
-                Spacer(minLength: 12)
-                Text(isSwitchingEpisode ? "正在切换剧集…" : session.status)
-                    .font(.system(size: TVBoxTypography.readable(12, minimum: 23), weight: .medium))
-                    .foregroundStyle(.white.opacity(0.78))
-                    .lineLimit(1)
-            }
+            controlButton(title: session.request.isLive ? "下一频道" : "下一集", systemImage: "forward.end.fill") { moveToEpisode(1) }
+                .disabled(session.request.queueIndex + 1 >= session.request.queue.count || isSwitchingEpisode)
         }
-        .padding(.horizontal, centered ? 18 : 0)
-        .padding(.vertical, centered ? 13 : 0)
-        .background(centered ? Color.black.opacity(0.58) : .clear, in: Capsule())
+        #if os(tvOS)
+        .focusSection()
+        #endif
     }
 
     private func controlButton(title: String, systemImage: String, action: @escaping () -> Void) -> some View {
@@ -2890,9 +3080,12 @@ struct PlayerScreen: View {
             Label(title, systemImage: systemImage)
                 .labelStyle(.iconOnly)
                 .font(.system(size: TVBoxTypography.readable(17, minimum: 28), weight: .semibold))
-                .frame(width: TVBoxTypography.readable(42, minimum: 72), height: TVBoxTypography.readable(42, minimum: 72))
+                .frame(width: TVBoxTypography.readable(52, minimum: 72), height: TVBoxTypography.readable(52, minimum: 72))
         }
         .playerControlButtonStyle()
+        #if os(tvOS)
+        .focused($focusedOverlayControl, equals: "transport:\(title)")
+        #endif
         .accessibilityLabel(title)
     }
 
@@ -2905,17 +3098,18 @@ struct PlayerScreen: View {
 
     private var additionalPlaybackOptions: some View {
         HStack(spacing: 9) {
-#if os(iOS)
-            if session.isPictureInPictureReady {
-                Button {
-                    session.startPictureInPicture()
-                } label: {
-                    trackMenuLabel(title: "画中画", systemImage: "pip.enter")
+            #if os(iOS)
+            if let item = session.request.item {
+                Button { catalog.toggleFavorite(item) } label: {
+                    trackMenuLabel(
+                        title: catalog.isFavorite(item) ? "取消收藏" : "收藏",
+                        systemImage: catalog.isFavorite(item) ? "heart.fill" : "heart"
+                    )
                 }
                 .playerControlButtonStyle()
-                .accessibilityLabel("开始画中画播放")
+                .accessibilityLabel(catalog.isFavorite(item) ? "取消收藏" : "收藏")
             }
-#endif
+            #endif
             if session.request.availableLines.count > 1 {
                 lineMenu
             }
@@ -2957,6 +3151,7 @@ struct PlayerScreen: View {
                 playbackRateLabel
             }
             .playerControlButtonStyle()
+            .focused($focusedOverlayControl, equals: "rate")
             .accessibilityLabel("播放速度：\(session.playbackRate == 1 ? "正常速度" : Self.rateLabel(Double(session.playbackRate)))")
             #else
             Menu {
@@ -2983,7 +3178,10 @@ struct PlayerScreen: View {
     }
 
     private var playbackRateLabel: some View {
-        trackMenuLabel(title: "播放速度", systemImage: "speedometer")
+        Text(Self.rateLabel(Double(session.playbackRate)))
+            .font(.system(size: TVBoxTypography.readable(15, minimum: 28), weight: .semibold, design: .rounded))
+            .frame(minWidth: TVBoxTypography.readable(48, minimum: 72), minHeight: TVBoxTypography.readable(42, minimum: 72))
+            .accessibilityLabel("播放速度：\(Self.rateLabel(Double(session.playbackRate)))")
     }
 
     private var danmakuMenu: some View {
@@ -3001,6 +3199,7 @@ struct PlayerScreen: View {
             danmakuMenuLabel
         }
         .playerControlButtonStyle()
+        .focused($focusedOverlayControl, equals: "danmaku")
         .accessibilityLabel("弹幕菜单")
         .accessibilityHint(danmakuLoadError ?? danmakuMatchTitle.map { "当前匹配：\($0)" } ?? "在线搜索、切换显示或调整弹幕")
         #else
@@ -3112,6 +3311,7 @@ struct PlayerScreen: View {
             trackMenuLabel(title: session.aspectRatioLabel, systemImage: "aspectratio")
         }
         .playerControlButtonStyle()
+        .focused($focusedOverlayControl, equals: "aspectRatio")
         .accessibilityLabel("画面比例：\(session.aspectRatioLabel)")
         #else
         Menu {
@@ -3188,17 +3388,25 @@ struct PlayerScreen: View {
                         .frame(width: 18, height: 18)
                         .overlay {
                             Circle()
-                                .strokeBorder(Color.tvboxSelection, lineWidth: progressFocused ? 3 : 0)
+                                .strokeBorder(Color.tvboxSelection, lineWidth: focusedOverlayControl == "progress" ? 3 : 0)
                                 .padding(-4)
                         }
                         .offset(x: inset + max(1, geometry.size.width - inset * 2) * CGFloat(fraction) - 9)
                 }
                 .frame(maxWidth: .infinity, minHeight: 48)
                 .contentShape(Rectangle())
+                .background(
+                    focusedOverlayControl == "progress" ? Color.white.opacity(0.12) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(.white.opacity(focusedOverlayControl == "progress" ? 0.8 : 0), lineWidth: 2)
+                }
             }
             .buttonStyle(.plain)
             .focusable()
-            .focused($progressFocused)
+            .focused($focusedOverlayControl, equals: "progress")
             .focusEffectDisabled()
             .disabled(!session.canSeek)
             .accessibilityLabel("播放进度")
@@ -3223,6 +3431,7 @@ struct PlayerScreen: View {
 
     private func previewProgress(bySeconds seconds: Double) {
         guard session.seekDurationMilliseconds > 0 else { return }
+        revealControls()
         if !isScrubbing {
             seekValue = session.progress
             isScrubbing = true
@@ -3269,6 +3478,9 @@ struct PlayerScreen: View {
             trackMenuLabel(title: title, systemImage: systemImage)
         }
         .playerControlButtonStyle()
+        #if os(tvOS)
+        .focused($focusedOverlayControl, equals: "track:\(title)")
+        #endif
         .accessibilityLabel(title)
     }
 
@@ -3297,6 +3509,7 @@ struct PlayerScreen: View {
             trackMenuLabel(title: "线路", systemImage: "rectangle.stack")
         }
         .playerControlButtonStyle()
+        .focused($focusedOverlayControl, equals: "line")
         .accessibilityLabel("播放线路")
         #else
         Menu {
@@ -3342,7 +3555,7 @@ struct PlayerScreen: View {
                 session.replace(with: next)
             } catch {
                 guard !Task.isCancelled else { return }
-                errorMessage = error.localizedDescription
+                reportPlaybackRequestError(error)
                 #if os(tvOS)
                 if landscapeLivePanel == .playlist, let currentEpisode {
                     livePanelFocusTarget = "vod:\(currentEpisode.id)"
@@ -3374,7 +3587,7 @@ struct PlayerScreen: View {
                 session.replace(with: next)
             } catch {
                 guard !Task.isCancelled else { return }
-                errorMessage = error.localizedDescription
+                reportPlaybackRequestError(error)
                 #if os(tvOS)
                 if landscapeLivePanel == .playlist, current.queue.indices.contains(current.queueIndex) {
                     livePanelFocusTarget = "vod:\(current.queue[current.queueIndex].id)"
@@ -3383,6 +3596,14 @@ struct PlayerScreen: View {
             }
             guard !Task.isCancelled else { return }
             isSwitchingEpisode = false
+        }
+    }
+
+    private func reportPlaybackRequestError(_ error: Error) {
+        if isShowingPortraitLibrary {
+            portraitLibraryErrorMessage = error.localizedDescription
+        } else {
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -3470,12 +3691,16 @@ private extension View {
 
     @ViewBuilder
     func playerControlButtonStyle(isAccent: Bool = false) -> some View {
+        #if os(iOS)
+        self.buttonStyle(.plain)
+            .foregroundStyle(.white)
+            .glassEffect(.regular.interactive(), in: Capsule())
+        #else
         if isAccent {
-            self.buttonStyle(.borderedProminent)
-                .tint(Color.tvboxSelection)
+            self.buttonStyle(.glassProminent)
         } else {
-            self.buttonStyle(.bordered)
-                .tint(Color.white.opacity(0.85))
+            self.buttonStyle(.glass)
         }
+        #endif
     }
 }
