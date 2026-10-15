@@ -18,46 +18,30 @@ struct DetailView: View {
     var body: some View {
         GeometryReader { geometry in
             let wide = geometry.size.width >= geometry.size.height
-            #if os(iOS)
-            let compactLandscape = wide && geometry.size.height < 500
-            #else
-            let compactLandscape = false
-            #endif
             ZStack {
                 ScreenBackground()
-                if compactLandscape {
-                    compactLandscapeLayout(size: geometry.size)
+                if wide {
+                    landscapeLayout(size: geometry.size)
                 } else {
-                    VStack(spacing: wide ? 20 : 14) {
-                        VStack(alignment: .leading, spacing: wide ? 16 : 12) {
-                            if wide {
-                                HStack(spacing: 24) {
-                                    if catalog.alternateSources(for: media).count > 1 { sourcePicker }
-                                    if supportedParsers.count > 1 { parserPicker }
-                                }
-                            } else {
-                                if catalog.alternateSources(for: media).count > 1 { sourcePicker }
-                                if supportedParsers.count > 1 { parserPicker }
-                            }
-                            if wide {
-                                wideOverview(availableHeight: geometry.size.height)
-                            } else {
-                                portraitOverview
-                            }
+                    VStack(spacing: 14) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            if catalog.alternateSources(for: media).count > 1 { sourcePicker }
+                            if supportedParsers.count > 1 { parserPicker }
+                            portraitOverview
                         }
                         .frame(maxWidth: 1350, alignment: .leading)
-                        .padding(.horizontal, wide ? 72 : 20)
-                        .padding(.top, wide ? 25 : 16)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 16)
                         .frame(maxWidth: .infinity, alignment: .top)
 
                         Rectangle()
                             .fill(Color.primary.opacity(0.10))
                             .frame(height: 1)
 
-                        playlist(wide: wide)
+                        playlist
                             .frame(maxWidth: 1350, maxHeight: .infinity, alignment: .topLeading)
-                            .padding(.horizontal, wide ? 72 : 20)
-                            .padding(.bottom, wide ? 24 : 14)
+                            .padding(.horizontal, 20)
+                            .padding(.bottom, 14)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }
@@ -94,29 +78,26 @@ struct DetailView: View {
         }
     }
 
-    private func compactLandscapeLayout(size: CGSize) -> some View {
-        HStack(alignment: .top, spacing: 16) {
-            VStack(alignment: .leading, spacing: 10) {
+    private func landscapeLayout(size: CGSize) -> some View {
+        HStack(alignment: .top, spacing: 24) {
+            VStack(alignment: .leading, spacing: 14) {
                 if catalog.alternateSources(for: media).count > 1 { sourcePicker }
                 if supportedParsers.count > 1 { parserPicker }
-                wideOverview(availableHeight: size.height)
-                Spacer(minLength: 0)
+                wideOverview(availableHeight: size.height, availableWidth: min(max(size.width * 0.42, 220), 800))
             }
-            .frame(width: min(max(size.width * 0.38, 220), 340), alignment: .topLeading)
+            .frame(width: min(max(size.width * 0.42, 220), 800), alignment: .topLeading)
 
             Rectangle()
                 .fill(Color.primary.opacity(0.10))
                 .frame(width: 1)
 
-            playlist(wide: false)
+            playlist
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(.trailing, 16)
-                .padding(.bottom, 10)
         }
-        .padding(.leading, 20)
-        .padding(.top, 10)
-        .frame(maxWidth: 1000, maxHeight: .infinity, alignment: .top)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(.horizontal, 36)
+        .padding(.vertical, 28)
+        .frame(maxWidth: 1500, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
     private var sourcePicker: some View {
@@ -153,12 +134,12 @@ struct DetailView: View {
         .pickerStyle(.menu)
     }
 
-    private func wideOverview(availableHeight: CGFloat) -> some View {
+    private func wideOverview(availableHeight: CGFloat, availableWidth: CGFloat? = nil) -> some View {
         #if os(tvOS)
         let compact = false
         let posterWidth = min(
             TVBoxTypography.readable(270, minimum: 360),
-            max(220, (availableHeight - 160) * 0.74)
+            min(max(220, (availableHeight - 160) * 0.74), (availableWidth ?? 800) * 0.46)
         )
         #else
         let compact = availableHeight < 900
@@ -192,10 +173,7 @@ struct DetailView: View {
                     if !media.subtitle.isEmpty {
                         Text(media.subtitle).font(.system(size: TVBoxTypography.readable(13, minimum: 23), weight: .medium)).foregroundStyle(Color.tvboxCyan)
                     }
-                    HStack(spacing: 10) {
-                        favoriteButton
-                        if hasAdditionalDetails { moreDetailsButton }
-                    }
+                    overviewActions
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -231,10 +209,7 @@ struct DetailView: View {
                     .lineSpacing(5)
                     .lineLimit(compact ? 2 : 3)
             }
-            HStack(spacing: 10) {
-                favoriteButton
-                if hasAdditionalDetails { moreDetailsButton }
-            }
+            overviewActions
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 8)
@@ -258,13 +233,29 @@ struct DetailView: View {
             catalog.toggleFavorite(media)
         } label: {
             Label(catalog.isFavorite(media) ? "已收藏" : "收藏", systemImage: catalog.isFavorite(media) ? "heart.fill" : "heart")
+                .fixedSize()
         }
         .buttonStyle(.bordered)
+        .fixedSize()
+    }
+
+    private var overviewActions: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                favoriteButton
+                if hasAdditionalDetails { moreDetailsButton }
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                favoriteButton
+                if hasAdditionalDetails { moreDetailsButton }
+            }
+        }
     }
 
     private var moreDetailsButton: some View {
         Button("更多信息") { isShowingFullDetails = true }
             .buttonStyle(.bordered)
+            .fixedSize()
     }
 
     private var detailMetadata: [String] {
@@ -322,11 +313,11 @@ struct DetailView: View {
         }
     }
 
-    private func playlist(wide: Bool) -> some View {
+    private var playlist: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 Text("选集")
-                    .font(.system(size: TVBoxTypography.readable(wide ? 24 : 20), weight: .bold, design: .rounded))
+                    .font(.system(size: TVBoxTypography.readable(20), weight: .bold, design: .rounded))
                     .foregroundStyle(Color.primary)
                 Spacer(minLength: 12)
                 if let line = selectedLine {
@@ -347,7 +338,7 @@ struct DetailView: View {
 
             if let line = selectedLine, !line.episodes.isEmpty {
                 ScrollView(.vertical) {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: wide ? 3 : 1), alignment: .leading, spacing: 14) {
+                    LazyVGrid(columns: [GridItem(.flexible())], alignment: .leading, spacing: 10) {
                         ForEach(line.episodes) { episode in
                             Button { play(episode) } label: {
                                 HStack(spacing: 12) {
@@ -363,7 +354,7 @@ struct DetailView: View {
                                     if isResolving { ProgressView().tint(Color.tvboxAccent) }
                                 }
                                 .padding(.horizontal, 18)
-                                .frame(maxWidth: .infinity, minHeight: TVBoxTypography.readable(64, minimum: 88), alignment: .leading)
+                                .frame(maxWidth: .infinity, minHeight: TVBoxTypography.readable(56, minimum: 72), alignment: .leading)
                                 .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                                 .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
                             }
@@ -393,7 +384,7 @@ struct DetailView: View {
 
     private var episodeFocusInset: CGFloat {
         #if os(tvOS)
-        28
+        20
         #else
         8
         #endif

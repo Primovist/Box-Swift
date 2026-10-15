@@ -27,6 +27,7 @@ struct HomeView: View {
     @State private var epgChannel: TVBoxLiveChannel?
     @State private var lockedGroup: TVBoxLiveGroup?
     @State private var unlockedLiveGroups: Set<String> = []
+    @State private var selectedLiveGroupID = ""
 
     private func items(for section: HomeSection) -> [MediaItem] {
         switch section {
@@ -80,6 +81,11 @@ struct HomeView: View {
         }
         .onChange(of: catalog.selectedSiteKey) { _, _ in
             searchText = ""
+        }
+        .onChange(of: catalog.liveGroups.map(\.id)) { _, groupIDs in
+            if !groupIDs.contains(selectedLiveGroupID) {
+                selectedLiveGroupID = ""
+            }
         }
         .onChange(of: searchAcrossSites) { _, _ in
             if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -218,7 +224,7 @@ struct HomeView: View {
     private func searchResultsContent(for selectedSection: HomeSection, wide: Bool) -> some View {
         let values = items(for: selectedSection)
         if !values.isEmpty {
-            contentGrid(values, wide: wide, titleOverride: "搜索结果", section: selectedSection)
+            contentGrid(values, wide: wide, section: selectedSection)
         } else if !catalog.isLoading {
             emptyState
         }
@@ -285,103 +291,100 @@ struct HomeView: View {
     }
 
     private func categoryPicker() -> some View {
-        Picker(selection: Binding(
-            get: { catalog.selectedCategoryID },
-            set: {
-                searchText = ""
-                catalog.selectCategory($0)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(catalog.categories) { category in
+                    let isSelected = catalog.selectedCategoryID == category.id
+                    Button {
+                        guard !isSelected else { return }
+                        searchText = ""
+                        catalog.selectCategory(category.id)
+                    } label: {
+                        Text(category.name)
+                            .font(.system(size: TVBoxTypography.readable(16, minimum: 29), weight: .semibold))
+                            .foregroundStyle(isSelected ? Color.white : Color.primary)
+                            .padding(.horizontal, 20)
+                            .frame(minHeight: TVBoxTypography.readable(48, minimum: 76))
+                            .background(isSelected ? Color.tvboxAccent : Color.tvboxSurface, in: Capsule())
+                            .overlay(Capsule().strokeBorder(Color.primary.opacity(isSelected ? 0 : 0.10), lineWidth: 1))
+                            .contentShape(Capsule())
+                    }
+                    .platformFocusableButtonStyle()
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
+                }
             }
-        )) {
-            ForEach(catalog.categories) { category in
-                Text(category.name).tag(category.id)
-            }
-        } label: {
-            Label(catalog.selectedCategory?.name ?? "最近更新", systemImage: "line.3.horizontal.decrease.circle")
-                .fontWeight(.semibold)
-                .frame(maxWidth: .infinity, minHeight: TVBoxTypography.readable(52, minimum: 76), alignment: .leading)
-                .padding(.horizontal, 18)
-                .contentShape(Rectangle())
         }
-        .pickerStyle(.menu)
+        .scrollClipDisabled()
         #if os(tvOS)
         .focusSection()
         #endif
     }
 
     private func filterPicker(category: TVBoxCategory) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(category.filters) { filter in
-                    Picker(selection: Binding(
-                        get: { catalog.selectedFilterValue(for: filter.key) },
-                        set: {
-                            searchText = ""
-                            catalog.setFilter(filter.key, value: $0)
-                        }
-                    )) {
-                        Text("全部").tag("")
-                        ForEach(filter.options) { option in
-                            Text(option.title).tag(option.value)
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(category.filters) { filter in
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(filter.name)
+                        .font(.system(size: TVBoxTypography.readable(12, minimum: 23), weight: .semibold))
+                        .foregroundStyle(Color.tvboxMuted)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            choiceChip(title: "全部", isSelected: catalog.selectedFilterValue(for: filter.key).isEmpty) {
+                                searchText = ""
+                                catalog.setFilter(filter.key, value: "")
+                            }
+                            ForEach(filter.options) { option in
+                                choiceChip(title: option.title, isSelected: catalog.selectedFilterValue(for: filter.key) == option.value) {
+                                    searchText = ""
+                                    catalog.setFilter(filter.key, value: option.value)
+                                }
+                            }
                         }
                     }
-                    label: {
-                        HStack(spacing: 10) {
-                            Text(filter.name).foregroundStyle(Color.tvboxMuted)
-                            Text(catalog.selectedFilterValue(for: filter.key).isEmpty
-                                 ? "全部"
-                                 : (filter.options.first(where: { $0.value == catalog.selectedFilterValue(for: filter.key) })?.title ?? "全部"))
-                                .fontWeight(.semibold)
-                                .foregroundStyle(Color.primary)
-                        }
-                        .frame(minHeight: TVBoxTypography.readable(44, minimum: 68))
-                        .padding(.horizontal, 10)
-                        .contentShape(Rectangle())
-                    }
-                    .pickerStyle(.menu)
                 }
             }
-            #if os(tvOS)
-            .focusSection()
-            #endif
         }
-        .scrollClipDisabled()
+        #if os(tvOS)
+        .focusSection()
+        #endif
     }
 
-    private func contentGrid(_ values: [MediaItem], wide: Bool, titleOverride: String? = nil, section: HomeSection) -> some View {
+    private func choiceChip(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: TVBoxTypography.readable(14, minimum: 25), weight: .medium))
+                .foregroundStyle(isSelected ? Color.white : Color.primary)
+                .padding(.horizontal, 16)
+                .frame(minHeight: TVBoxTypography.readable(42, minimum: 66))
+                .background(isSelected ? Color.tvboxAccent : Color.tvboxSurface, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(isSelected ? 0 : 0.10), lineWidth: 1))
+                .contentShape(Capsule())
+        }
+        .platformFocusableButtonStyle()
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private func contentGrid(_ values: [MediaItem], wide: Bool, section: HomeSection) -> some View {
         #if os(tvOS)
         let columnCount = wide ? 4 : 2
         #else
         let columnCount = wide ? 5 : 2
         #endif
         let columns = Array(repeating: GridItem(.flexible(), spacing: wide ? 28 : 13), count: columnCount)
-        return VStack(alignment: .leading, spacing: 15) {
-            HStack(alignment: .lastTextBaseline) {
-                VStack(alignment: .leading, spacing: 5) {
-                    SectionEyebrow(text: titleOverride ?? (catalog.isSearchingAllSites ? "全站搜索" : (catalog.selectedCategory?.name ?? "影视内容")))
-                    Text(titleOverride ?? (catalog.isSearching ? "搜索结果" : "正在探索"))
-                        .font(.system(size: TVBoxTypography.readable(wide ? 26 : 22), weight: .bold, design: .rounded))
-                        .foregroundStyle(Color.primary)
-                }
-                Spacer()
-                Text("\(values.count) 个条目")
-                    .font(.system(size: TVBoxTypography.readable(12, minimum: 23), weight: .medium))
-                    .foregroundStyle(Color.tvboxMuted)
-            }
-            LazyVGrid(columns: columns, alignment: .leading, spacing: wide ? 36 : 18) {
-                ForEach(values) { item in
-                        MediaCard(item: item)
-                            .onAppear {
-                            if self.section == section,
-                               section == .video || (section == .search && catalog.isSearching) {
-                                catalog.loadMoreIfNeeded(current: item)
-                            }
+        return LazyVGrid(columns: columns, alignment: .leading, spacing: wide ? 36 : 18) {
+            ForEach(values) { item in
+                MediaCard(item: item)
+                    .onAppear {
+                        if self.section == section,
+                           section == .video || (section == .search && catalog.isSearching) {
+                            catalog.loadMoreIfNeeded(current: item)
                         }
-                }
+                    }
             }
-            #if os(tvOS)
-            .focusSection()
-            #endif
         }
+        #if os(tvOS)
+        .focusSection()
+        #endif
     }
 
     private func savedItemsSection(_ title: String, items: [MediaItem], wide: Bool, history: Bool = false) -> some View {
@@ -481,7 +484,10 @@ struct HomeView: View {
             .frame(maxWidth: .infinity, minHeight: 220)
         } else {
             VStack(alignment: .leading, spacing: 22) {
-                ForEach(catalog.liveGroups) { group in
+                if catalog.liveGroups.count > 1 {
+                    liveGroupPicker
+                }
+                ForEach(visibleLiveGroups) { group in
                     if !group.password.isEmpty && !unlockedLiveGroups.contains(group.id) {
                         Button { lockedGroup = group } label: {
                             Label("\(group.name) · 需要密码", systemImage: "lock.fill")
@@ -500,6 +506,30 @@ struct HomeView: View {
                 }
             }
         }
+    }
+
+    private var visibleLiveGroups: [TVBoxLiveGroup] {
+        guard !selectedLiveGroupID.isEmpty else { return catalog.liveGroups }
+        return catalog.liveGroups.filter { $0.id == selectedLiveGroupID }
+    }
+
+    private var liveGroupPicker: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                choiceChip(title: "全部", isSelected: selectedLiveGroupID.isEmpty) {
+                    selectedLiveGroupID = ""
+                }
+                ForEach(catalog.liveGroups) { group in
+                    choiceChip(title: group.name, isSelected: selectedLiveGroupID == group.id) {
+                        selectedLiveGroupID = group.id
+                    }
+                }
+            }
+        }
+        .scrollClipDisabled()
+        #if os(tvOS)
+        .focusSection()
+        #endif
     }
 
     private func liveChannelGrid(_ group: TVBoxLiveGroup, wide: Bool) -> some View {
