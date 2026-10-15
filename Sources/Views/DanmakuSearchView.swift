@@ -407,7 +407,8 @@ struct DanmakuSearchView: View {
         } catch {
             guard generation == requestGeneration else { return }
             autoMatchedTitle = nil
-            await search()
+            message = error.localizedDescription
+            requestResultFocus("manualSearch")
         }
         if generation == requestGeneration { isLoading = false }
     }

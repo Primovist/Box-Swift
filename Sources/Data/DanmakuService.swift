@@ -119,6 +119,14 @@ struct DanmakuService {
             return EpisodeReference(season: nil, number: number)
         }
 
+        // 上游队列格式为“剧名 001”，只读取末尾空格分隔的 0XX。
+        if let episodeToken = trimmed.split(whereSeparator: \.isWhitespace).last,
+           episodeToken.count == 3,
+           episodeToken.first == "0",
+           let number = Int(episodeToken), number > 0 {
+            return EpisodeReference(season: nil, number: number)
+        }
+
         let chinesePattern = #"第\s*([零〇一二两三四五六七八九十百]+)\s*[集话話期回]"#
         guard let expression = try? NSRegularExpression(pattern: chinesePattern),
               let match = expression.firstMatch(in: title, range: titleRange),
@@ -265,9 +273,13 @@ struct DanmakuService {
             ) {
                 return matched
             }
+        } catch DanmakuServiceError.http(let status)
+            where status == 404 || status == 405 || status == 501 {
+            // 只有旧版服务未实现 /match 时才退回搜索接口。
         } catch {
             if Task.isCancelled { throw CancellationError() }
-            // 老版本 DandanPlay 兼容服务可能没有 match 接口，继续使用搜索接口兜底。
+            // 不要把 503 等真实匹配错误吞掉后改发不含集数的搜索请求。
+            throw error
         }
 
         let searchResults = try await searchAnime(keyword: keyword, apiAddress: apiAddress)
@@ -359,7 +371,10 @@ struct DanmakuService {
         let expectsEpisode = !categoryIsMovie && (isSeries || ["电视剧", "连续剧", "剧集", "番剧", "动漫", "动画", "series", "tv"]
             .contains { category.lowercased().contains($0) })
         let requestedEpisode = Self.episodeReference(in: episodeTitle)
-        let requestedSeason = requestedEpisode?.season ?? Self.seasonNumber(in: title)
+        var requestedSeason = requestedEpisode?.season ?? Self.seasonNumber(in: title)
+        if expectsEpisode, requestedSeason == nil {
+            requestedSeason = 1
+        }
         if expectsEpisode, requestedEpisode == nil { return nil }
 
         var fileName = title
@@ -367,8 +382,6 @@ struct DanmakuService {
         if expectsEpisode, let requestedEpisode {
             if let season = requestedSeason {
                 fileName += String(format: " S%02dE%02d", season, requestedEpisode.number)
-            } else {
-                fileName += String(format: " 第%02d集", requestedEpisode.number)
             }
         }
 
