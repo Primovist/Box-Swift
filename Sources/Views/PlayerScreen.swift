@@ -231,6 +231,9 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     private var resumePositionStartedAt: TimeInterval?
     private var resumePositionLastAttemptAt: TimeInterval?
     private var resumePositionAttempts = 0
+    private var seekDisplayTargetMilliseconds: Int?
+    private var seekDisplayStartedAt: TimeInterval?
+    private var seekDisplayOriginMilliseconds: Int?
     private var danmakuSeekOriginMilliseconds: Double?
     private var danmakuSeekLastSampleMilliseconds: Double?
     private var danmakuSeekLastSampleUptime: TimeInterval?
@@ -367,11 +370,12 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         clearResumePositionSeek()
         didApplyResumePosition = true
         let duration = totalDurationMilliseconds
-        let origin = currentPlaybackMilliseconds
-        let target = min(duration, max(0, origin + seconds * 1_000))
+        let sampledOrigin = currentPlaybackMilliseconds
+        let seekOrigin = seekDisplayMilliseconds(for: sampledOrigin) ?? sampledOrigin
+        let target = min(duration, max(0, seekOrigin + seconds * 1_000))
         guard seekCatchupIfNeeded(to: target) else {
             player.time = VLCTime(int: Int32(clamping: max(0, target - catchupTimelineOffsetMilliseconds)))
-            resetDanmakuClock(to: target, awaitingPlayerSample: true, originMilliseconds: origin)
+            resetDanmakuClock(to: target, awaitingPlayerSample: true, originMilliseconds: sampledOrigin)
             refreshProgress()
             return
         }
@@ -556,18 +560,19 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         }
         clearResumePositionSeek()
         didApplyResumePosition = true
-        let origin = currentPlaybackMilliseconds
-        let target = max(0, min(totalDurationMilliseconds, origin + Int(offset)))
+        let sampledOrigin = currentPlaybackMilliseconds
+        let seekOrigin = seekDisplayMilliseconds(for: sampledOrigin) ?? sampledOrigin
+        let target = max(0, min(totalDurationMilliseconds, seekOrigin + Int(offset)))
         if seekCatchupIfNeeded(to: target) {
             DispatchQueue.main.async(execute: completion)
             return
         }
-        let started = player.jump(withOffset: Int32(clamping: target - origin), completion: completion)
+        let started = player.jump(withOffset: Int32(clamping: target - sampledOrigin), completion: completion)
         guard started else {
             DispatchQueue.main.async(execute: completion)
             return
         }
-        resetDanmakuClock(to: target, awaitingPlayerSample: true, originMilliseconds: origin)
+        resetDanmakuClock(to: target, awaitingPlayerSample: true, originMilliseconds: sampledOrigin)
     }
     func mediaLength() -> Int64 { Int64(totalDurationMilliseconds) }
     func mediaTime() -> Int64 { Int64(currentPlaybackMilliseconds) }
@@ -743,7 +748,8 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
             }
         }
         let sampledCurrent = currentPlaybackMilliseconds
-        let current = resumePositionDisplayMilliseconds(for: sampledCurrent)
+        let resumePositionCurrent = resumePositionDisplayMilliseconds(for: sampledCurrent)
+        let current = seekDisplayMilliseconds(for: sampledCurrent) ?? resumePositionCurrent
         updateDanmakuClock(with: Int32(clamping: sampledCurrent))
         let total = totalDurationMilliseconds
         if isPlaying {
@@ -958,6 +964,9 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     ) {
         let now = ProcessInfo.processInfo.systemUptime
         let position = Double(max(0, milliseconds))
+        seekDisplayTargetMilliseconds = awaitingPlayerSample ? max(0, milliseconds) : nil
+        seekDisplayStartedAt = awaitingPlayerSample ? now : nil
+        seekDisplayOriginMilliseconds = awaitingPlayerSample ? originMilliseconds : nil
         clearLateDanmakuSeek()
         clearPositionSeek()
         anchorDanmakuClock(
@@ -970,6 +979,56 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         danmakuSeekOriginMilliseconds = awaitingPlayerSample ? originMilliseconds.map(Double.init) : nil
         danmakuSeekLastSampleMilliseconds = awaitingPlayerSample ? originMilliseconds.map(Double.init) : nil
         danmakuSeekLastSampleUptime = awaitingPlayerSample && originMilliseconds != nil ? now : nil
+    }
+
+    private func seekDisplayMilliseconds(for sampledCurrent: Int) -> Int? {
+        guard let target = seekDisplayTargetMilliseconds,
+              let startedAt = seekDisplayStartedAt else { return nil }
+
+        // A catch-up URL replacement reports its requested offset before the new stream
+        // provides a real timestamp. Do not treat that synthetic value as seek confirmation.
+        if isAwaitingCatchupMediaSample { return target }
+
+        if abs(sampledCurrent - target) <= 750 {
+            clearSeekDisplayTarget()
+            return nil
+        }
+
+        if let origin = seekDisplayOriginMilliseconds {
+            let elapsed = max(0, ProcessInfo.processInfo.systemUptime - startedAt)
+            let playbackAdvance = playbackRequested && isPlaying
+                ? elapsed * 1_000 * Double(playbackRate)
+                : 0
+            let overshootAllowance = Int(1_500 + playbackAdvance)
+            let passedTargetInSeekDirection = target > origin
+                ? (sampledCurrent > target + 750 && sampledCurrent <= target + overshootAllowance)
+                : (target < origin
+                    && sampledCurrent < target - 750
+                    && sampledCurrent >= target - overshootAllowance)
+            if passedTargetInSeekDirection {
+                clearSeekDisplayTarget()
+                return nil
+            }
+        } else if sampledCurrent > target + 750, isPlaying {
+            // The first real sample from a server-seeked catch-up stream may already
+            // have advanced past the requested point.
+            clearSeekDisplayTarget()
+            return nil
+        }
+
+        // VLC may report the pre-seek position for a few callbacks after accepting a seek.
+        // Keep the slider on the requested point until the new timeline is observable.
+        if ProcessInfo.processInfo.systemUptime - startedAt >= 8 {
+            clearSeekDisplayTarget()
+            return nil
+        }
+        return target
+    }
+
+    private func clearSeekDisplayTarget() {
+        seekDisplayTargetMilliseconds = nil
+        seekDisplayStartedAt = nil
+        seekDisplayOriginMilliseconds = nil
     }
 
     private func clearPendingDanmakuSeek() {
@@ -3801,28 +3860,12 @@ struct PlayerScreen: View {
 
     #if os(tvOS)
     private var tvProgressControl: some View {
-        GeometryReader { geometry in
-            let fraction = min(1, max(0, isScrubbing ? seekValue : session.progress))
-            let inset: CGFloat = 14
+        let fraction = min(1, max(0, isScrubbing ? seekValue : session.progress))
 
-            Button {} label: {
-                ZStack(alignment: .leading) {
-                    ProgressView(value: fraction)
-                        .progressViewStyle(.linear)
-                        .tint(Color.tvboxSelection)
-                        .frame(height: 6)
-                        .padding(.horizontal, inset)
-
-                    Circle()
-                        .fill(.white)
-                        .frame(width: 18, height: 18)
-                        .overlay {
-                            Circle()
-                                .strokeBorder(Color.tvboxSelection, lineWidth: focusedOverlayControl == "progress" ? 3 : 0)
-                                .padding(-4)
-                        }
-                        .offset(x: inset + max(1, geometry.size.width - inset * 2) * CGFloat(fraction) - 9)
-                }
+        return Button {} label: {
+            ProgressView(value: fraction)
+                .progressViewStyle(.linear)
+                .tint(Color.tvboxSelection)
                 .frame(maxWidth: .infinity, minHeight: 48)
                 .contentShape(Rectangle())
                 .background(
@@ -3833,30 +3876,28 @@ struct PlayerScreen: View {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .strokeBorder(.white.opacity(focusedOverlayControl == "progress" ? 0.8 : 0), lineWidth: 2)
                 }
-            }
-            .buttonStyle(.plain)
-            .focusable()
-            .focused($focusedOverlayControl, equals: "progress")
-            .focusEffectDisabled()
-            .disabled(!session.canSeek)
-            .accessibilityLabel("播放进度")
-            .accessibilityValue("\(session.elapsedText) / \(session.durationText)")
-            .accessibilityAdjustableAction { direction in
-                switch direction {
-                case .increment: session.seek(by: 15)
-                case .decrement: session.seek(by: -15)
-                @unknown default: break
-                }
-            }
-            .onMoveCommand { direction in
-                switch direction {
-                case .left: previewProgress(bySeconds: -5)
-                case .right: previewProgress(bySeconds: 5)
-                default: break
-                }
+        }
+        .buttonStyle(.plain)
+        .focusable()
+        .focused($focusedOverlayControl, equals: "progress")
+        .focusEffectDisabled()
+        .disabled(!session.canSeek)
+        .accessibilityLabel("播放进度")
+        .accessibilityValue("\(session.elapsedText) / \(session.durationText)")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: session.seek(by: 15)
+            case .decrement: session.seek(by: -15)
+            @unknown default: break
             }
         }
-        .frame(height: 56)
+        .onMoveCommand { direction in
+            switch direction {
+            case .left: previewProgress(bySeconds: -5)
+            case .right: previewProgress(bySeconds: 5)
+            default: break
+            }
+        }
     }
 
     private func previewProgress(bySeconds seconds: Double) {
