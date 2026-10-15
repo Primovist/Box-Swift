@@ -1100,46 +1100,102 @@ struct PlayerScreen: View {
             #else
             let isPortraitLayout = false
             #endif
+            let isPortraitSplitLayout = isPortraitLayout
+                && (liveContext != nil || session.request.item != nil)
+            let portraitVideoHeight = min(geometry.size.width * 9 / 16, geometry.size.height * 0.46)
             ZStack {
                 Color.black.ignoresSafeArea()
-                ZStack {
-                    VLCVideoSurface(session: session)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .allowsHitTesting(false)
-                        .zIndex(0)
-                    DanmakuOverlay(clock: session.danmakuClock, comments: danmakuComments, generation: danmakuGeneration)
-                        .id("\(session.playbackGeneration)-\(danmakuGeneration)")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .allowsHitTesting(false)
-                        .zIndex(1)
+                VStack(spacing: 0) {
                     #if os(iOS)
-                    GeometryReader { interaction in
-                        touchInteractionLayer(
-                            size: interaction.size,
-                            isPortraitLayout: isPortraitLayout,
-                            closeEdgeWidth: max(28, geometry.safeAreaInsets.leading + 18)
-                        )
+                    if isPortraitSplitLayout {
+                        portraitPlayerNavigationBar
                     }
-                    .zIndex(1)
                     #endif
+                    ZStack {
+                        VLCVideoSurface(session: session)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .allowsHitTesting(false)
+                            .zIndex(0)
+                        DanmakuOverlay(clock: session.danmakuClock, comments: danmakuComments, generation: danmakuGeneration)
+                            .id("\(session.playbackGeneration)-\(danmakuGeneration)")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .allowsHitTesting(false)
+                            .zIndex(1)
+                        #if os(iOS)
+                        GeometryReader { interaction in
+                            touchInteractionLayer(
+                                size: interaction.size,
+                                isPortraitLayout: isPortraitLayout,
+                                closeEdgeWidth: max(28, geometry.safeAreaInsets.leading + 18)
+                            )
+                        }
+                        .zIndex(1)
+                        #endif
 
-                    if areControlsVisible {
-                        controlsOverlay(in: geometry, isPortrait: isPortraitLayout)
+                        if areControlsVisible {
+                            controlsOverlay(
+                                in: geometry,
+                                isPortrait: isPortraitLayout,
+                                showsPortraitDetails: !isPortraitSplitLayout,
+                                showsPortraitHeader: !isPortraitSplitLayout
+                            )
                             .transition(session.request.liveContext != nil && !isPortraitLayout ? .identity : .opacity)
                             .zIndex(2)
-                    }
+                        }
 
-                    if !isPortraitLayout, let landscapeLivePanel {
-                        liveLandscapePanel(
-                            landscapeLivePanel,
-                            size: geometry.size,
-                            safeAreaInsets: geometry.safeAreaInsets
-                        )
+                        if !isPortraitLayout, let landscapeLivePanel {
+                            liveLandscapePanel(
+                                landscapeLivePanel,
+                                size: geometry.size,
+                                safeAreaInsets: geometry.safeAreaInsets
+                            )
                             .zIndex(3)
+                        }
+
+                        #if os(iOS)
+                        if isPortraitSplitLayout, isPortraitPlaybackLoading, !areControlsVisible {
+                            portraitLoadingStatus
+                                .padding(.horizontal, 20)
+                                .allowsHitTesting(false)
+                                .zIndex(2)
+                        }
+
+                        if let interactionHUDMessage {
+                            Label(interactionHUDMessage, systemImage: interactionHUDSymbol)
+                                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                .multilineTextAlignment(.center)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.horizontal, 17)
+                                .padding(.vertical, 12)
+                                .background(.black.opacity(0.72), in: Capsule())
+                                .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 1))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .transition(.opacity)
+                                .allowsHitTesting(false)
+                                .zIndex(3)
+                        }
+                        #endif
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(maxHeight: isPortraitSplitLayout ? nil : .infinity)
+                    .frame(height: isPortraitSplitLayout ? portraitVideoHeight : nil)
+                    .clipped()
+
+                    if isPortraitSplitLayout {
+                        if liveContext != nil {
+                            livePortraitPanels
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .background(Color.tvboxSurface)
+                        } else if let item = session.request.item {
+                            GeometryReader { panelGeometry in
+                                vodPortraitDetails(item, minimumHeight: panelGeometry.size.height)
+                            }
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .ignoresSafeArea(edges: .all)
+                .ignoresSafeArea(edges: isPortraitSplitLayout ? [] : .all)
                 .zIndex(0)
                 #if os(iOS)
                 SystemVolumeControl(controller: systemVolumeController)
@@ -1168,23 +1224,6 @@ struct PlayerScreen: View {
                 }
                 #endif
 
-                #if os(iOS)
-                if let interactionHUDMessage {
-                    Label(interactionHUDMessage, systemImage: interactionHUDSymbol)
-                        .font(.system(size: 15, weight: .semibold, design: .rounded))
-                        .multilineTextAlignment(.center)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 17)
-                        .padding(.vertical, 12)
-                        .background(.black.opacity(0.72), in: Capsule())
-                        .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 1))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .transition(.opacity)
-                        .allowsHitTesting(false)
-                        .zIndex(3)
-                }
-                #endif
             }
             #if os(iOS)
             .simultaneousGesture(
@@ -1196,16 +1235,17 @@ struct PlayerScreen: View {
                               value.startLocation.x <= max(28, geometry.safeAreaInsets.leading + 18),
                               delta.width >= 90,
                               abs(delta.height) < 100,
+                              (!isPortraitSplitLayout || value.startLocation.y <= 54 + portraitVideoHeight),
                               delta.width > abs(delta.height) else { return }
                         closePlayer()
                     }
             )
             #endif
             .foregroundStyle(.white)
+            #if os(iOS)
+            .statusBarHidden(!isPortraitSplitLayout)
+            #endif
         }
-        #if os(iOS)
-        .statusBarHidden(true)
-        #endif
         .onAppear(perform: preparePlayerOnAppear)
         .task(id: liveGuideTaskKey) {
             await loadLiveGuide()
@@ -1776,19 +1816,44 @@ struct PlayerScreen: View {
     #endif
 
     @ViewBuilder
-    private func controlsOverlay(in geometry: GeometryProxy, isPortrait: Bool) -> some View {
+    private func controlsOverlay(
+        in geometry: GeometryProxy,
+        isPortrait: Bool,
+        showsPortraitDetails: Bool = true,
+        showsPortraitHeader: Bool = true
+    ) -> some View {
         #if os(iOS)
         if isPortrait {
             VStack(spacing: 0) {
-                playerHeader(isPortrait: true)
-                Spacer(minLength: 30)
-                primaryPlaybackControls
-                Spacer(minLength: 24)
-                portraitBottomControls
+                if showsPortraitHeader {
+                    playerHeader(isPortrait: true)
+                }
+                if showsPortraitDetails {
+                    Spacer(minLength: 30)
+                    primaryPlaybackControls
+                    Spacer(minLength: 24)
+                    portraitBottomControls
+                } else if session.status == "播放失败" {
+                    Spacer(minLength: 8)
+                    portraitSplitFailureControls
+                    Spacer(minLength: 8)
+                } else {
+                    Spacer(minLength: 8)
+                    if isPortraitPlaybackLoading {
+                        HStack(spacing: 12) {
+                            portraitLoadingStatus
+                            portraitPlaybackToggle
+                        }
+                    } else {
+                        portraitSplitTransportControls
+                    }
+                    Spacer(minLength: 8)
+                    portraitGlassPlaybackOptions
+                }
             }
             .padding(.horizontal, 20)
-            .padding(.top, max(12, geometry.safeAreaInsets.top + 8))
-            .padding(.bottom, max(16, geometry.safeAreaInsets.bottom + 8))
+            .padding(.top, isPortrait && !showsPortraitHeader ? 8 : max(12, geometry.safeAreaInsets.top + 8))
+            .padding(.bottom, isPortrait && !showsPortraitHeader ? 8 : max(16, geometry.safeAreaInsets.bottom + 8))
         } else {
             landscapeControls(safeAreaInsets: geometry.safeAreaInsets)
         }
@@ -1796,6 +1861,134 @@ struct PlayerScreen: View {
         landscapeControls(safeAreaInsets: geometry.safeAreaInsets)
         #endif
     }
+
+#if os(iOS)
+    private var isPortraitPlaybackLoading: Bool {
+        isSwitchingEpisode || session.status == "准备连接"
+            || session.status.hasPrefix("正在连接")
+            || session.status.hasPrefix("正在缓冲")
+    }
+
+    private var portraitLoadingStatus: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+                .tint(.white)
+                .accessibilityHidden(true)
+            Text(isSwitchingEpisode ? "正在切换剧集…" : session.status)
+                .font(.system(size: 12, weight: .medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.black.opacity(0.72), in: Capsule())
+        .foregroundStyle(.white)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var portraitPlaybackToggle: some View {
+        let isPlaybackRequested = session.playbackRequested || session.isPlaying
+        return Button {
+            revealControls()
+            session.togglePlayback()
+        } label: {
+            Image(systemName: isPlaybackRequested ? "pause.fill" : "play.fill")
+                .font(.system(size: 23, weight: .bold))
+                .frame(width: 58, height: 58)
+        }
+        .playerControlButtonStyle(isAccent: true)
+        .accessibilityLabel(isPlaybackRequested ? "暂停" : "播放")
+    }
+
+    private var portraitSplitFailureControls: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text("无法播放此地址")
+                .font(.system(size: 14, weight: .semibold))
+                .lineLimit(1)
+            Button("重试") { session.retry() }
+                .font(.system(size: 14, weight: .semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(.white.opacity(0.16), in: Capsule())
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.black.opacity(0.72), in: Capsule())
+        .overlay(Capsule().strokeBorder(.white.opacity(0.14), lineWidth: 1))
+    }
+
+    private var portraitSplitTransportControls: some View {
+        HStack(spacing: 12) {
+            if session.canSeekByTime {
+                controlButton(title: "后退 15 秒", systemImage: "gobackward.15") { session.seek(by: -15) }
+            } else {
+                controlButton(
+                    title: liveContext == nil ? "上一集" : "上一频道",
+                    systemImage: "backward.end.fill"
+                ) { moveToEpisode(-1) }
+                    .disabled(session.request.queueIndex == 0 || isSwitchingEpisode)
+            }
+
+            portraitPlaybackToggle
+
+            if session.canSeekByTime {
+                controlButton(title: "前进 15 秒", systemImage: "goforward.15") { session.seek(by: 15) }
+            } else {
+                controlButton(
+                    title: liveContext == nil ? "下一集" : "下一频道",
+                    systemImage: "forward.end.fill"
+                ) { moveToEpisode(1) }
+                    .disabled(session.request.queueIndex + 1 >= session.request.queue.count || isSwitchingEpisode)
+            }
+        }
+    }
+
+    private var portraitGlassPlaybackOptions: some View {
+        VStack(spacing: 5) {
+            HStack(spacing: 8) {
+                aspectRatioMenu
+                ScrollView(.horizontal, showsIndicators: false) {
+                    additionalPlaybackOptions
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .glassEffect(.regular, in: Capsule())
+
+            if session.canSeek {
+                HStack(spacing: 6) {
+                    Text(isScrubbing ? Self.clockString(fraction: seekValue, duration: session.durationText) : session.elapsedText)
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .fixedSize()
+                    Slider(value: Binding(
+                        get: { isScrubbing ? seekValue : session.progress },
+                        set: { seekValue = $0 }
+                    ), in: 0...1, onEditingChanged: { editing in
+                        if editing {
+                            seekValue = session.progress
+                            isScrubbing = true
+                        } else {
+                            isScrubbing = false
+                            session.seek(to: seekValue)
+                        }
+                    })
+                    .tint(.white)
+                    .frame(height: 18)
+                    .accessibilityLabel("播放进度")
+                    Text(session.durationText)
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .fixedSize()
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 2)
+                .background(.black.opacity(0.55), in: Capsule())
+            }
+        }
+    }
+#endif
 
     private func landscapeControls(safeAreaInsets: EdgeInsets) -> some View {
         VStack(spacing: 0) {
@@ -1883,7 +2076,10 @@ struct PlayerScreen: View {
             }
             if liveContext != nil || session.request.item != nil {
                 Button {
-                    if isPortrait { isShowingPortraitLibrary = true }
+                    if isPortrait {
+                        livePortraitTab = liveContext == nil ? .channels : .programs
+                        isShowingPortraitLibrary = true
+                    }
                     else { toggleLivePanel(liveContext == nil ? .playlist : .guide) }
                 } label: {
                     trackMenuLabel(title: liveContext == nil ? "选集" : "频道", systemImage: "list.bullet.rectangle")
@@ -1903,6 +2099,48 @@ struct PlayerScreen: View {
     }
 
     #if os(iOS)
+    private var portraitPlayerNavigationBar: some View {
+        HStack(spacing: 12) {
+            Button(action: closePlayer) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: 42, height: 42)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white)
+            .accessibilityLabel("返回播放器")
+
+            Spacer(minLength: 8)
+            Text(liveContext?.currentChannel?.name ?? session.request.item?.title ?? session.title)
+                .font(.system(size: 17, weight: .semibold))
+                .lineLimit(1)
+            Spacer(minLength: 8)
+
+            if session.isPictureInPictureReady {
+                Button { session.startPictureInPicture() } label: {
+                    Image(systemName: "pip.enter")
+                        .font(.system(size: 16, weight: .medium))
+                        .frame(width: 42, height: 42)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white)
+                .glassEffect(.regular.interactive(), in: Circle())
+                .accessibilityLabel("开始画中画播放")
+            }
+
+            SystemRoutePicker()
+                .frame(width: 42, height: 42)
+                .glassEffect(.regular, in: Circle())
+                .accessibilityLabel("选择输出设备")
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 54)
+        .background(Color.black)
+        .foregroundStyle(.white)
+    }
+
     private var portraitBottomControls: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
@@ -1929,6 +2167,14 @@ struct PlayerScreen: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(.white.opacity(0.62))
                         .lineLimit(1)
+                }
+                if let item = session.request.item,
+                   !item.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(item.summary)
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundStyle(.white.opacity(0.68))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             controlPanel(compact: true)
@@ -1969,28 +2215,27 @@ struct PlayerScreen: View {
                         .foregroundStyle(Color.primary)
                         .lineLimit(compact ? 1 : 2)
                     Spacer(minLength: 8)
-                    if !compact, !item.remarks.isEmpty {
+                    if !item.remarks.isEmpty {
                         Text(item.remarks)
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(Color.tvboxMuted)
                             .lineLimit(1)
                     }
                 }
-                if !compact, !item.summary.isEmpty {
+                if !item.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text(item.summary)
                         .font(.system(size: 12))
                         .foregroundStyle(Color.primary.opacity(0.68))
                         .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                if !compact {
-                    let metadata = [item.year, item.area, item.language, item.actor.isEmpty ? "" : "主演：\(item.actor)"]
-                        .filter { !$0.isEmpty }
-                    if !metadata.isEmpty {
-                        Text(metadata.joined(separator: " · "))
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(Color.tvboxMuted)
-                            .lineLimit(2)
-                    }
+                let metadata = [item.year, item.area, item.language, item.actor.isEmpty ? "" : "主演：\(item.actor)"]
+                    .filter { !$0.isEmpty }
+                if !metadata.isEmpty {
+                    Text(metadata.joined(separator: " · "))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.tvboxMuted)
+                        .lineLimit(compact ? 1 : 2)
                 }
             }
             Rectangle()
@@ -2084,6 +2329,12 @@ struct PlayerScreen: View {
                         .padding(.vertical, vodFocusVerticalInset)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .onAppear {
+                        scrollToCurrentVodEpisode(using: proxy)
+                    }
+                    .onChange(of: vodFocusRestoreKey) { _, _ in
+                        scrollToCurrentVodEpisode(using: proxy)
+                    }
                     #if os(iOS)
                     .scrollBounceBehavior(.basedOnSize)
                     #endif
@@ -2136,6 +2387,15 @@ struct PlayerScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         #endif
+    }
+
+    private func scrollToCurrentVodEpisode(using proxy: ScrollViewProxy) {
+        guard session.request.queue.indices.contains(session.request.queueIndex) else { return }
+        let episodeID = session.request.queue[session.request.queueIndex].id
+        Task { @MainActor in
+            await Task.yield()
+            proxy.scrollTo(episodeID, anchor: .center)
+        }
     }
 
     #if os(tvOS)
@@ -2247,6 +2507,7 @@ struct PlayerScreen: View {
             proxy.scrollTo(episode.id, anchor: .center)
         }
     }
+
     #endif
 
     @ViewBuilder
@@ -2782,10 +3043,19 @@ struct PlayerScreen: View {
                     .font(.system(size: TVBoxTypography.readable(20), weight: .bold, design: .rounded))
                 Spacer()
                 Button { toggleLivePanel(panel) } label: {
-                    Label("完成", systemImage: "xmark")
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 40, height: 40)
+                        .contentShape(Circle())
                 }
-                .playerControlButtonStyle()
-                .frame(minHeight: TVBoxTypography.readable(48, minimum: 64))
+                .buttonStyle(.plain)
+                #if os(iOS)
+                .glassEffect(.regular.interactive(), in: Circle())
+                #else
+                .buttonStyle(.glass)
+                #endif
+                .accessibilityLabel("完成")
             }
             livePanelContent(panel)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)

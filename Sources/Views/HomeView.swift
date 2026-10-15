@@ -116,12 +116,7 @@ struct HomeView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 if tab == .search {
-                    selectedSectionContent(for: tab, wide: wide)
-                        #if os(tvOS)
-                        .navigationTitle("")
-                        #else
-                        .navigationTitle("搜索")
-                        #endif
+                    titledSectionContent(for: tab, wide: wide)
                         .searchable(text: $searchText, prompt: "搜索片名")
                         #if os(iOS)
                         .searchFocused($isSearchFocused)
@@ -131,15 +126,8 @@ struct HomeView: View {
                             Text("本站").tag(false)
                         }
                         .onSubmit(of: .search, submitSearch)
-                } else if tab == .settings {
-                    selectedSectionContent(for: tab, wide: wide)
-                        #if os(tvOS)
-                        .navigationTitle("")
-                        #else
-                        .navigationTitle("设置")
-                        #endif
                 } else {
-                    selectedSectionContent(for: tab, wide: wide)
+                    titledSectionContent(for: tab, wide: wide)
                 }
             }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -153,9 +141,9 @@ struct HomeView: View {
                         .toolbar(.hidden, for: .tabBar)
                 }
                 #if os(tvOS)
-                .toolbar(tab == .search ? .visible : .hidden, for: .navigationBar)
+                .toolbar(.hidden, for: .navigationBar)
                 #else
-                .toolbar(tab == .search || tab == .settings ? .visible : .hidden, for: .navigationBar)
+                .toolbar(.visible, for: .navigationBar)
                 #endif
         }
         .tabItem { Label(tab.rawValue, systemImage: sectionSymbol(for: tab)) }
@@ -171,14 +159,20 @@ struct HomeView: View {
         }
     }
 
+    @ViewBuilder
+    private func titledSectionContent(for tab: HomeSection, wide: Bool) -> some View {
+        #if os(tvOS)
+        selectedSectionContent(for: tab, wide: wide)
+            .navigationTitle("")
+        #else
+        selectedSectionContent(for: tab, wide: wide)
+            .navigationTitle(tab.rawValue)
+        #endif
+    }
+
     private func scrollableSectionContent(for selectedSection: HomeSection, wide: Bool) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: wide ? 28 : 20) {
-                #if os(iOS)
-                if selectedSection != .search {
-                    header(wide: wide)
-                }
-                #endif
                 searchSectionContent(for: selectedSection, wide: wide)
                 videoSectionContent(for: selectedSection, wide: wide)
                 primarySectionContent(for: selectedSection, wide: wide)
@@ -279,41 +273,6 @@ struct HomeView: View {
                 .foregroundStyle(Color.tvboxMuted)
                 .fixedSize(horizontal: false, vertical: true)
         }
-    }
-
-    @ViewBuilder
-    private func header(wide: Bool) -> some View {
-        if wide {
-            HStack(spacing: 18) {
-                brand
-                Spacer(minLength: 8)
-            }
-        } else {
-            HStack(spacing: 10) {
-                brand
-                Spacer(minLength: 0)
-            }
-        }
-    }
-
-    private var brand: some View {
-        HStack(spacing: 13) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .fill(LinearGradient(colors: [Color.tvboxAccent, Color(red: 0.78, green: 0.12, blue: 0.30)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                    .frame(width: TVBoxTypography.readable(46, minimum: 64), height: TVBoxTypography.readable(46, minimum: 64))
-                Image(systemName: "play.rectangle.fill")
-                    .font(.system(size: TVBoxTypography.readable(22, minimum: 30), weight: .bold))
-                    .foregroundStyle(.white)
-            }
-            Text(catalog.selectedSite?.name ?? "选择片源")
-                .font(.system(size: TVBoxTypography.readable(18), weight: .bold, design: .rounded))
-                .foregroundStyle(Color.primary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 180, alignment: .leading)
-        }
-        .accessibilityElement(children: .combine)
     }
 
     private func sectionSymbol(for value: HomeSection) -> String {
