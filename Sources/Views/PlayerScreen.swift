@@ -1218,6 +1218,100 @@ struct PlayerScreen: View {
 
     var body: some View {
         GeometryReader { geometry in
+            playerCanvas(in: geometry)
+        }
+        .onAppear(perform: preparePlayerOnAppear)
+        .task(id: liveGuideTaskKey) {
+            await loadLiveGuide()
+        }
+        .onDisappear(perform: cleanupPlayerOnDisappear)
+        .onReceive(historySaveTimer, perform: handleHistorySaveTimer)
+        .onChange(of: session.didReachEnd) { _, reachedEnd in handlePlaybackDidReachEnd(reachedEnd) }
+        .onChange(of: session.playbackGeneration) { _, _ in handlePlaybackGenerationChanged() }
+        .onChange(of: danmakuEnabled) { _, enabled in handleDanmakuEnabledChanged(enabled) }
+        .onChange(of: session.isPlaying) { _, _ in
+            refreshControls()
+        }
+        #if os(tvOS)
+        .onChange(of: session.status) { previousStatus, status in handleSessionStatusChanged(previousStatus, status) }
+        .onChange(of: session.canSeek) { _, canSeek in handleSeekCapabilityChanged(canSeek) }
+        .onChange(of: focusedOverlayControl) { previous, focusedControl in
+            if previous == "progress", focusedControl != "progress" { finishProgressScrubbing() }
+            handleFocusedControlChanged(focusedControl)
+        }
+        #endif
+        .onChange(of: isScrubbing) { _, scrubbing in handleScrubbingChanged(scrubbing) }
+        .onChange(of: isPlayerPresentationActive) { _, active in handlePlayerPresentationChanged(active) }
+        .onChange(of: showingDanmakuSearch) { _, showing in handleDanmakuSearchPresentationChanged(showing) }
+        .onChange(of: showingDanmakuSettings) { _, showing in handleDanmakuSettingsPresentationChanged(showing) }
+        .onChange(of: showingPlayerMenu) { _, showing in handlePlayerMenuPresentationChanged(showing) }
+        .onChange(of: showingSubtitleTracks) { _, showing in handleSubtitlePresentationChanged(showing) }
+        .alert("无法开始播放", isPresented: playerErrorAlertPresented) {
+            Button("好", role: .cancel) { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "")
+        }
+        .sheet(isPresented: $showingDanmakuSearch) {
+            let searchView = DanmakuSearchView(
+                initialQuery: session.request.item?.title ?? session.title,
+                mediaTitle: session.request.item?.title ?? session.title,
+                mediaCategory: currentDanmakuCategory,
+                mediaYear: session.request.item?.year ?? "",
+                currentEpisodeTitle: currentDanmakuEpisodeTitle,
+                expectsEpisodeMatch: currentDanmakuExpectsEpisodeMatch
+            ) { comments, matchTitle in
+                guard danmakuSearchPlaybackGeneration == session.playbackGeneration else { return }
+                danmakuTask?.cancel()
+                danmakuGeneration += 1
+                danmakuLoadError = nil
+                danmakuComments = comments
+                danmakuMatchTitle = matchTitle
+                if !danmakuEnabled { skipNextDanmakuEnableReload = true }
+                danmakuEnabled = true
+                #if os(iOS)
+                showInteractionHUD("弹幕已匹配：\(matchTitle)", symbol: "checkmark.circle.fill", duration: 2)
+                #endif
+            }
+
+            #if os(tvOS)
+            searchView
+                .presentationDetents([.large])
+                .presentationSizing(.danmakuSearch)
+            #else
+            searchView
+            #endif
+        }
+        .sheet(isPresented: $showingDanmakuSettings) {
+            DanmakuSettingsSheet()
+        }
+        #if os(iOS)
+        .sheet(isPresented: $isShowingPortraitLibrary) {
+            portraitLibrarySheet
+        }
+        #endif
+        #if os(iOS)
+        .confirmationDialog("选择字幕", isPresented: $showingSubtitleTracks, titleVisibility: .visible) {
+            ForEach(session.subtitleTracks) { option in
+                Button(option.index == session.selectedSubtitleTrackIndex ? "✓  \(option.title)" : option.title) {
+                    session.selectSubtitleTrack(option.index)
+                }
+            }
+        }
+#endif
+        .confirmationDialog(playerMenuTitle, isPresented: $showingPlayerMenu, titleVisibility: .visible) {
+            ForEach(playerMenuOptions) { option in
+                Button(option.title, action: option.action)
+            }
+        }
+#if os(tvOS)
+        .onExitCommand(perform: handleExitCommand)
+        .onPlayPauseCommand(perform: handlePlayPauseCommand)
+        #endif
+        .preferredColorScheme(.dark)
+    }
+
+    @ViewBuilder
+    private func playerCanvas(in geometry: GeometryProxy) -> some View {
             #if os(iOS)
             let isPortraitLayout = geometry.size.height > geometry.size.width
             #else
@@ -1369,95 +1463,6 @@ struct PlayerScreen: View {
             #if os(iOS)
             .statusBarHidden(!isPortraitSplitLayout)
             #endif
-        }
-        .onAppear(perform: preparePlayerOnAppear)
-        .task(id: liveGuideTaskKey) {
-            await loadLiveGuide()
-        }
-        .onDisappear(perform: cleanupPlayerOnDisappear)
-        .onReceive(historySaveTimer, perform: handleHistorySaveTimer)
-        .onChange(of: session.didReachEnd) { _, reachedEnd in handlePlaybackDidReachEnd(reachedEnd) }
-        .onChange(of: session.playbackGeneration) { _, _ in handlePlaybackGenerationChanged() }
-        .onChange(of: danmakuEnabled) { _, enabled in handleDanmakuEnabledChanged(enabled) }
-        .onChange(of: session.isPlaying) { _, _ in
-            refreshControls()
-        }
-        #if os(tvOS)
-        .onChange(of: session.status) { previousStatus, status in handleSessionStatusChanged(previousStatus, status) }
-        .onChange(of: session.canSeek) { _, canSeek in handleSeekCapabilityChanged(canSeek) }
-        .onChange(of: focusedOverlayControl) { previous, focusedControl in
-            if previous == "progress", focusedControl != "progress" { finishProgressScrubbing() }
-            handleFocusedControlChanged(focusedControl)
-        }
-        #endif
-        .onChange(of: isScrubbing) { _, scrubbing in handleScrubbingChanged(scrubbing) }
-        .onChange(of: isPlayerPresentationActive) { _, active in handlePlayerPresentationChanged(active) }
-        .onChange(of: showingDanmakuSearch) { _, showing in handleDanmakuSearchPresentationChanged(showing) }
-        .onChange(of: showingDanmakuSettings) { _, showing in handleDanmakuSettingsPresentationChanged(showing) }
-        .onChange(of: showingPlayerMenu) { _, showing in handlePlayerMenuPresentationChanged(showing) }
-        .onChange(of: showingSubtitleTracks) { _, showing in handleSubtitlePresentationChanged(showing) }
-        .alert("无法开始播放", isPresented: playerErrorAlertPresented) {
-            Button("好", role: .cancel) { errorMessage = nil }
-        } message: {
-            Text(errorMessage ?? "")
-        }
-        .sheet(isPresented: $showingDanmakuSearch) {
-            let searchView = DanmakuSearchView(
-                initialQuery: session.request.item?.title ?? session.title,
-                mediaTitle: session.request.item?.title ?? session.title,
-                mediaCategory: currentDanmakuCategory,
-                mediaYear: session.request.item?.year ?? "",
-                currentEpisodeTitle: currentDanmakuEpisodeTitle,
-                expectsEpisodeMatch: currentDanmakuExpectsEpisodeMatch
-            ) { comments, matchTitle in
-                guard danmakuSearchPlaybackGeneration == session.playbackGeneration else { return }
-                danmakuTask?.cancel()
-                danmakuGeneration += 1
-                danmakuLoadError = nil
-                danmakuComments = comments
-                danmakuMatchTitle = matchTitle
-                if !danmakuEnabled { skipNextDanmakuEnableReload = true }
-                danmakuEnabled = true
-                #if os(iOS)
-                showInteractionHUD("弹幕已匹配：\(matchTitle)", symbol: "checkmark.circle.fill", duration: 2)
-                #endif
-            }
-
-            #if os(tvOS)
-            searchView
-                .presentationDetents([.large])
-                .presentationSizing(.danmakuSearch)
-            #else
-            searchView
-            #endif
-        }
-        .sheet(isPresented: $showingDanmakuSettings) {
-            DanmakuSettingsSheet()
-        }
-        #if os(iOS)
-        .sheet(isPresented: $isShowingPortraitLibrary) {
-            portraitLibrarySheet
-        }
-        #endif
-        #if os(iOS)
-        .confirmationDialog("选择字幕", isPresented: $showingSubtitleTracks, titleVisibility: .visible) {
-            ForEach(session.subtitleTracks) { option in
-                Button(option.index == session.selectedSubtitleTrackIndex ? "✓  \(option.title)" : option.title) {
-                    session.selectSubtitleTrack(option.index)
-                }
-            }
-        }
-#endif
-        .confirmationDialog(playerMenuTitle, isPresented: $showingPlayerMenu, titleVisibility: .visible) {
-            ForEach(playerMenuOptions) { option in
-                Button(option.title, action: option.action)
-            }
-        }
-#if os(tvOS)
-        .onExitCommand(perform: handleExitCommand)
-        .onPlayPauseCommand(perform: handlePlayPauseCommand)
-        #endif
-        .preferredColorScheme(.dark)
     }
 
     private var playerErrorAlertPresented: Binding<Bool> {
