@@ -8,6 +8,18 @@ private struct DanmakuFieldFrameKey: PreferenceKey {
     }
 }
 
+#if os(tvOS)
+struct DanmakuSearchPresentationSizing: PresentationSizing {
+    func proposedSize(for subview: PresentationSizingRoot, context: PresentationSizingContext) -> ProposedViewSize {
+        ProposedViewSize(width: 1_600, height: 900)
+    }
+}
+
+extension PresentationSizing where Self == DanmakuSearchPresentationSizing {
+    static var danmakuSearch: Self { DanmakuSearchPresentationSizing() }
+}
+#endif
+
 struct DanmakuSearchView: View {
     @Environment(\.dismiss) private var dismiss
     @FocusState private var isSearchFocused: Bool
@@ -204,19 +216,61 @@ struct DanmakuSearchView: View {
         .body.weight(.medium)
     }
 
-    private let searchContentMaxWidth: CGFloat = 920
+    private var searchContentMaxWidth: CGFloat {
+        #if os(tvOS)
+        1_600
+        #else
+        920
+        #endif
+    }
 
-    private let resultsMaxWidth: CGFloat = 880
+    private var resultsMaxWidth: CGFloat {
+        #if os(tvOS)
+        1_500
+        #else
+        880
+        #endif
+    }
 
-    private let searchHorizontalPadding: CGFloat = 22
+    private var searchHorizontalPadding: CGFloat {
+        #if os(tvOS)
+        48
+        #else
+        22
+        #endif
+    }
 
-    private let resultFocusPadding: CGFloat = 8
+    private var resultFocusPadding: CGFloat {
+        #if os(tvOS)
+        18
+        #else
+        8
+        #endif
+    }
 
-    private let resultRowMinimumHeight: CGFloat = 72
+    private var resultRowMinimumHeight: CGFloat {
+        #if os(tvOS)
+        92
+        #else
+        72
+        #endif
+    }
 
-    private let actionRowMinimumHeight: CGFloat = 54
+    private var actionRowMinimumHeight: CGFloat {
+        #if os(tvOS)
+        76
+        #else
+        54
+        #endif
+    }
 
-    private let resultFocusSpacing: CGFloat = 10
+    private var resultFocusSpacing: CGFloat {
+        #if os(tvOS)
+        18
+        #else
+        10
+        #endif
+    }
 
     private func statusBanner(_ text: String, isLoading: Bool = false) -> some View {
         HStack(alignment: .top, spacing: 12) {
@@ -320,7 +374,11 @@ struct DanmakuSearchView: View {
             }
             .padding(12)
             .frame(minHeight: resultRowMinimumHeight)
+            #if os(tvOS)
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            #else
             .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 15))
+            #endif
         }
         .platformFocusableButtonStyle()
         #if os(tvOS)
@@ -343,7 +401,11 @@ struct DanmakuSearchView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 16)
                 .frame(maxWidth: .infinity, minHeight: actionRowMinimumHeight, alignment: .leading)
+                #if os(tvOS)
+                .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                #else
                 .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                #endif
         }
         .platformFocusableButtonStyle()
         #if os(tvOS)

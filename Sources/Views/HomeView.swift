@@ -244,7 +244,7 @@ struct HomeView: View {
             if wide, catalog.selectedCategoryID.isEmpty, searchText.isEmpty,
                let featured = items(for: selectedSection).first {
                 NavigationLink(value: featured) { featuredCard(featured, wide: wide) }
-                    .platformFocusableButtonStyle()
+                    .platformCardButtonStyle()
             }
         }
     }
@@ -291,8 +291,13 @@ struct HomeView: View {
     }
 
     private func categoryPicker() -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
+        #if os(tvOS)
+        let chipSpacing: CGFloat = 18
+        #else
+        let chipSpacing: CGFloat = 10
+        #endif
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: chipSpacing) {
                 ForEach(catalog.categories) { category in
                     let isSelected = catalog.selectedCategoryID == category.id
                     Button {
@@ -305,14 +310,21 @@ struct HomeView: View {
                             .foregroundStyle(isSelected ? Color.white : Color.primary)
                             .padding(.horizontal, 20)
                             .frame(minHeight: TVBoxTypography.readable(48, minimum: 76))
+                            #if os(tvOS)
+                            .contentShape(Capsule())
+                            #else
                             .background(isSelected ? Color.tvboxAccent : Color.tvboxSurface, in: Capsule())
                             .overlay(Capsule().strokeBorder(Color.primary.opacity(isSelected ? 0 : 0.10), lineWidth: 1))
                             .contentShape(Capsule())
+                            #endif
                     }
-                    .platformFocusableButtonStyle()
+                    .platformSelectionButtonStyle(isSelected: isSelected)
                     .accessibilityAddTraits(isSelected ? .isSelected : [])
                 }
             }
+            #if os(tvOS)
+            .padding(.vertical, 14)
+            #endif
         }
         .scrollClipDisabled()
         #if os(tvOS)
@@ -321,14 +333,19 @@ struct HomeView: View {
     }
 
     private func filterPicker(category: TVBoxCategory) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        #if os(tvOS)
+        let chipSpacing: CGFloat = 16
+        #else
+        let chipSpacing: CGFloat = 8
+        #endif
+        return VStack(alignment: .leading, spacing: 12) {
             ForEach(category.filters) { filter in
                 VStack(alignment: .leading, spacing: 7) {
                     Text(filter.name)
                         .font(.system(size: TVBoxTypography.readable(12, minimum: 23), weight: .semibold))
                         .foregroundStyle(Color.tvboxMuted)
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
+                        HStack(spacing: chipSpacing) {
                             choiceChip(title: "全部", isSelected: catalog.selectedFilterValue(for: filter.key).isEmpty) {
                                 searchText = ""
                                 catalog.setFilter(filter.key, value: "")
@@ -341,6 +358,10 @@ struct HomeView: View {
                             }
                         }
                     }
+                    #if os(tvOS)
+                    .scrollClipDisabled()
+                    .padding(.vertical, 12)
+                    #endif
                 }
             }
         }
@@ -356,11 +377,15 @@ struct HomeView: View {
                 .foregroundStyle(isSelected ? Color.white : Color.primary)
                 .padding(.horizontal, 16)
                 .frame(minHeight: TVBoxTypography.readable(42, minimum: 66))
+                #if os(tvOS)
+                .contentShape(Capsule())
+                #else
                 .background(isSelected ? Color.tvboxAccent : Color.tvboxSurface, in: Capsule())
                 .overlay(Capsule().strokeBorder(Color.primary.opacity(isSelected ? 0 : 0.10), lineWidth: 1))
                 .contentShape(Capsule())
+                #endif
         }
-        .platformFocusableButtonStyle()
+        .platformSelectionButtonStyle(isSelected: isSelected)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
@@ -494,7 +519,11 @@ struct HomeView: View {
                                 .font(.system(size: TVBoxTypography.readable(15), weight: .semibold))
                                 .foregroundStyle(Color.primary)
                                 .frame(maxWidth: .infinity, minHeight: 64)
+                                #if os(tvOS)
+                                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                #else
                                 .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                #endif
                         }
                         .platformFocusableButtonStyle()
                     } else {
@@ -514,8 +543,13 @@ struct HomeView: View {
     }
 
     private var liveGroupPicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
+        #if os(tvOS)
+        let chipSpacing: CGFloat = 18
+        #else
+        let chipSpacing: CGFloat = 10
+        #endif
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: chipSpacing) {
                 choiceChip(title: "全部", isSelected: selectedLiveGroupID.isEmpty) {
                     selectedLiveGroupID = ""
                 }
@@ -525,6 +559,9 @@ struct HomeView: View {
                     }
                 }
             }
+            #if os(tvOS)
+            .padding(.vertical, 12)
+            #endif
         }
         .scrollClipDisabled()
         #if os(tvOS)
@@ -541,10 +578,17 @@ struct HomeView: View {
         #endif
         let rowCount = (channels.count + columnCount - 1) / columnCount
         let cellHeight = TVBoxTypography.readable(64, minimum: 112)
+        #if os(tvOS)
+        let gridHeight = CGFloat(rowCount) * cellHeight + CGFloat(max(0, rowCount - 1) * 28)
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 24), count: columnCount)
+        let rowSpacing: CGFloat = 28
+        #else
         let gridHeight = CGFloat(rowCount) * cellHeight + CGFloat(max(0, rowCount - 1) * 16)
         let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: columnCount)
+        let rowSpacing: CGFloat = 16
+        #endif
 
-        return LazyVGrid(columns: columns, alignment: .leading, spacing: 16) {
+        return LazyVGrid(columns: columns, alignment: .leading, spacing: rowSpacing) {
             ForEach(channels) { channel in
                 liveChannelControl(channel, group: group)
             }
@@ -586,7 +630,11 @@ struct HomeView: View {
         }
         .padding(TVBoxTypography.readable(15, minimum: 22))
         .frame(maxWidth: .infinity, minHeight: TVBoxTypography.readable(64, minimum: 112), maxHeight: TVBoxTypography.readable(64, minimum: 112), alignment: .leading)
+        #if os(tvOS)
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        #else
         .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        #endif
     }
 
     private var emptyState: some View {

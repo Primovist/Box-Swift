@@ -64,6 +64,33 @@ struct SectionEyebrow: View {
 struct PlatformFocusableButtonStyle: ViewModifier {
     func body(content: Content) -> some View {
         #if os(tvOS)
+        content.buttonStyle(.glass)
+        #else
+        content.buttonStyle(.automatic)
+        #endif
+    }
+}
+
+struct PlatformSelectionButtonStyle: ViewModifier {
+    let isSelected: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        #if os(tvOS)
+        if isSelected {
+            content.buttonStyle(.glassProminent)
+        } else {
+            content.buttonStyle(.glass)
+        }
+        #else
+        content.buttonStyle(.automatic)
+        #endif
+    }
+}
+
+struct PlatformCardButtonStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        #if os(tvOS)
         content.buttonStyle(.card)
         #else
         content.buttonStyle(.automatic)
@@ -74,6 +101,14 @@ struct PlatformFocusableButtonStyle: ViewModifier {
 extension View {
     func platformFocusableButtonStyle() -> some View {
         modifier(PlatformFocusableButtonStyle())
+    }
+
+    func platformSelectionButtonStyle(isSelected: Bool) -> some View {
+        modifier(PlatformSelectionButtonStyle(isSelected: isSelected))
+    }
+
+    func platformCardButtonStyle() -> some View {
+        modifier(PlatformCardButtonStyle())
     }
 }
 

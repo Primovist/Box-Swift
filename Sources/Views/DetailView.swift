@@ -9,6 +9,10 @@ struct DetailView: View {
     @State private var isResolving = false
     @State private var errorMessage: String?
     @State private var isShowingFullDetails = false
+    #if os(tvOS)
+    @FocusState private var focusedEpisodeID: String?
+    @State private var pendingEpisodeFocusID: String?
+    #endif
 
     let item: MediaItem
 
@@ -337,40 +341,69 @@ struct DetailView: View {
             }
 
             if let line = selectedLine, !line.episodes.isEmpty {
-                ScrollView(.vertical) {
-                    LazyVGrid(columns: [GridItem(.flexible())], alignment: .leading, spacing: 10) {
-                        ForEach(line.episodes) { episode in
-                            Button { play(episode) } label: {
-                                HStack(spacing: 12) {
-                                    Image(systemName: "play.circle.fill")
-                                        .font(.system(size: TVBoxTypography.readable(21)))
-                                        .foregroundStyle(Color.tvboxAccent)
-                                    Text(episode.title)
-                                        .font(.system(size: TVBoxTypography.readable(14), weight: .semibold))
-                                        .foregroundStyle(Color.primary)
-                                        .lineLimit(2)
-                                        .multilineTextAlignment(.leading)
-                                    Spacer(minLength: 3)
-                                    if isResolving { ProgressView().tint(Color.tvboxAccent) }
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical) {
+                        LazyVGrid(columns: [GridItem(.flexible())], alignment: .leading, spacing: episodeRowSpacing) {
+                            ForEach(line.episodes) { episode in
+                                Button { play(episode) } label: {
+                                    HStack(spacing: 12) {
+                                        Image(systemName: "play.circle.fill")
+                                            .font(.system(size: TVBoxTypography.readable(21)))
+                                            .foregroundStyle(Color.tvboxAccent)
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(episode.title)
+                                                .font(.system(size: TVBoxTypography.readable(14), weight: .semibold))
+                                                .foregroundStyle(Color.primary)
+                                                .lineLimit(2)
+                                                .multilineTextAlignment(.leading)
+                                            #if os(tvOS)
+                                            if episode.id == preferredEpisodeID {
+                                                Text("继续观看")
+                                                    .font(.system(size: TVBoxTypography.readable(11, minimum: 20), weight: .semibold))
+                                                    .foregroundStyle(Color.tvboxAccent)
+                                            }
+                                            #endif
+                                        }
+                                        Spacer(minLength: 3)
+                                        if isResolving { ProgressView().tint(Color.tvboxAccent) }
+                                    }
+                                    .padding(.horizontal, 18)
+                                    .frame(maxWidth: .infinity, minHeight: TVBoxTypography.readable(56, minimum: 72), alignment: .leading)
+                                    #if os(tvOS)
+                                    .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                    #else
+                                    .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
+                                    #endif
                                 }
-                                .padding(.horizontal, 18)
-                                .frame(maxWidth: .infinity, minHeight: TVBoxTypography.readable(56, minimum: 72), alignment: .leading)
-                                .background(Color.tvboxSurface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
+                                .platformFocusableButtonStyle()
+                                #if os(tvOS)
+                                .onAppear { focusPendingEpisode(episode.id) }
+                                .onChange(of: pendingEpisodeFocusID) { _, pendingID in
+                                    if pendingID == episode.id { focusPendingEpisode(episode.id) }
+                                }
+                                .focused($focusedEpisodeID, equals: episode.id)
+                                #endif
+                                #if os(tvOS)
+                                .accessibilityLabel(episode.id == preferredEpisodeID ? "继续观看，\(episode.title)" : episode.title)
+                                #else
+                                .accessibilityLabel(episode.title)
+                                #endif
+                                .disabled(isResolving)
+                                .id(episode.id)
                             }
-                            .platformFocusableButtonStyle()
-                            .accessibilityLabel(episode.title)
-                            .disabled(isResolving)
                         }
+                        .padding(.horizontal, episodeFocusInset)
+                        .padding(.vertical, episodeFocusInset)
                     }
-                    .padding(.horizontal, episodeFocusInset)
-                    .padding(.vertical, episodeFocusInset)
+                    .scrollBounceBehavior(.basedOnSize)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    #if os(tvOS)
+                    .focusSection()
+                    .onAppear { focusPreferredEpisode(using: proxy, episodes: line.episodes) }
+                    .onChange(of: selectedLineID) { _, _ in focusPreferredEpisode(using: proxy, episodes: selectedLine?.episodes ?? []) }
+                    #endif
                 }
-                .scrollBounceBehavior(.basedOnSize)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                #if os(tvOS)
-                .focusSection()
-                #endif
             } else {
                 Text("站点尚未返回播放线路。")
                     .font(.system(size: TVBoxTypography.readable(13)))
@@ -389,6 +422,45 @@ struct DetailView: View {
         8
         #endif
     }
+
+    private var episodeRowSpacing: CGFloat {
+        #if os(tvOS)
+        18
+        #else
+        10
+        #endif
+    }
+
+    #if os(tvOS)
+    private func focusPreferredEpisode(using proxy: ScrollViewProxy, episodes: [Episode]) {
+        guard let targetID = preferredEpisodeID,
+              episodes.contains(where: { $0.id == targetID }) else {
+            pendingEpisodeFocusID = nil
+            return
+        }
+        let targetLineID = selectedLineID
+        let targetMediaID = media.id
+        pendingEpisodeFocusID = targetID
+        Task { @MainActor in
+            await Task.yield()
+            guard preferredEpisodeID == targetID,
+                  selectedLineID == targetLineID,
+                  media.id == targetMediaID else { return }
+            proxy.scrollTo(targetID, anchor: .center)
+            await Task.yield()
+            guard preferredEpisodeID == targetID,
+                  selectedLineID == targetLineID,
+                  media.id == targetMediaID else { return }
+            focusedEpisodeID = targetID
+        }
+    }
+
+    private func focusPendingEpisode(_ episodeID: String) {
+        guard pendingEpisodeFocusID == episodeID else { return }
+        focusedEpisodeID = episodeID
+        pendingEpisodeFocusID = nil
+    }
+    #endif
 
     private func play(_ episode: Episode) {
         guard !isResolving else { return }

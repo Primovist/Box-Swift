@@ -37,7 +37,13 @@ struct MediaArtwork: View {
                     .clipped()
                 }
 
+                #if os(tvOS)
+                if showsTitle {
+                    LinearGradient(colors: [.clear, .black.opacity(0.82)], startPoint: .center, endPoint: .bottom)
+                }
+                #else
                 LinearGradient(colors: [.clear, .black.opacity(0.82)], startPoint: .center, endPoint: .bottom)
+                #endif
                 if showsTitle {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(item.category)
@@ -228,7 +234,7 @@ struct MediaCard: View {
             }
             .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
-        .platformFocusableButtonStyle()
+        .platformCardButtonStyle()
         .accessibilityHint("打开详情和选集")
     }
 }

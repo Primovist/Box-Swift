@@ -1143,9 +1143,6 @@ struct PlayerScreen: View {
     @StateObject private var session: VLCPlaybackSession
     @State private var isScrubbing = false
     @State private var seekValue: Double = 0
-#if os(tvOS)
-    @State private var progressScrubCommitTask: Task<Void, Never>?
-#endif
     @State private var isSwitchingEpisode = false
     @State private var vodSelectionTask: Task<Void, Never>?
     @State private var errorMessage: String?
@@ -1252,6 +1249,7 @@ struct PlayerScreen: View {
                             touchInteractionLayer(
                                 size: interaction.size,
                                 isPortraitLayout: isPortraitLayout,
+                                isPortraitSplitLayout: isPortraitSplitLayout,
                                 closeEdgeWidth: max(28, geometry.safeAreaInsets.leading + 18)
                             )
                         }
@@ -1361,7 +1359,7 @@ struct PlayerScreen: View {
                               value.startLocation.x <= max(28, geometry.safeAreaInsets.leading + 18),
                               delta.width >= 90,
                               abs(delta.height) < 100,
-                              (!isPortraitSplitLayout || value.startLocation.y <= 54 + portraitVideoHeight),
+                              (!isPortraitSplitLayout || value.startLocation.y > 54 + portraitVideoHeight),
                               delta.width > abs(delta.height) else { return }
                         closePlayer()
                     }
@@ -1386,7 +1384,11 @@ struct PlayerScreen: View {
         }
         #if os(tvOS)
         .onChange(of: session.status) { previousStatus, status in handleSessionStatusChanged(previousStatus, status) }
-        .onChange(of: focusedOverlayControl) { _, focusedControl in handleFocusedControlChanged(focusedControl) }
+        .onChange(of: session.canSeek) { _, canSeek in handleSeekCapabilityChanged(canSeek) }
+        .onChange(of: focusedOverlayControl) { previous, focusedControl in
+            if previous == "progress", focusedControl != "progress" { finishProgressScrubbing() }
+            handleFocusedControlChanged(focusedControl)
+        }
         #endif
         .onChange(of: isScrubbing) { _, scrubbing in handleScrubbingChanged(scrubbing) }
         .onChange(of: isPlayerPresentationActive) { _, active in handlePlayerPresentationChanged(active) }
@@ -1400,7 +1402,7 @@ struct PlayerScreen: View {
             Text(errorMessage ?? "")
         }
         .sheet(isPresented: $showingDanmakuSearch) {
-            DanmakuSearchView(
+            let searchView = DanmakuSearchView(
                 initialQuery: session.request.item?.title ?? session.title,
                 mediaTitle: session.request.item?.title ?? session.title,
                 mediaCategory: currentDanmakuCategory,
@@ -1420,6 +1422,14 @@ struct PlayerScreen: View {
                 showInteractionHUD("弹幕已匹配：\(matchTitle)", symbol: "checkmark.circle.fill", duration: 2)
                 #endif
             }
+
+            #if os(tvOS)
+            searchView
+                .presentationDetents([.large])
+                .presentationSizing(.danmakuSearch)
+            #else
+            searchView
+            #endif
         }
         .sheet(isPresented: $showingDanmakuSettings) {
             DanmakuSettingsSheet()
@@ -1507,14 +1517,19 @@ struct PlayerScreen: View {
 
     #if os(tvOS)
     private func handleExitCommand() {
+        if isScrubbing { finishProgressScrubbing() }
+        guard !isPlayerPresentationActive else { return }
         if landscapeLivePanel != nil {
             revealControls()
+        } else if areControlsVisible {
+            toggleControlsVisibility()
         } else {
             closePlayer()
         }
     }
 
     private func handlePlayPauseCommand() {
+        if isScrubbing { finishProgressScrubbing() }
         session.togglePlayback()
         revealControls()
     }
@@ -1539,9 +1554,6 @@ struct PlayerScreen: View {
         interactionHUDTask?.cancel()
         vodSelectionTask?.cancel()
         vodSelectionTask = nil
-        #if os(tvOS)
-        progressScrubCommitTask?.cancel()
-        #endif
         #if os(iOS)
         restoreOrientationAfterPlayback()
         #endif
@@ -1571,14 +1583,20 @@ struct PlayerScreen: View {
 
     private func handlePlaybackGenerationChanged() {
         #if os(tvOS)
-        progressScrubCommitTask?.cancel()
-        progressScrubCommitTask = nil
         isScrubbing = false
         seekValue = session.progress
         #endif
         focusLiveGuideDateForPlayback()
         loadEpisodeDanmaku()
     }
+
+    #if os(tvOS)
+    private func handleSeekCapabilityChanged(_ canSeek: Bool) {
+        guard !canSeek, isScrubbing else { return }
+        isScrubbing = false
+        seekValue = session.progress
+    }
+    #endif
 
     private func handleDanmakuEnabledChanged(_ enabled: Bool) {
         if enabled {
@@ -1594,7 +1612,7 @@ struct PlayerScreen: View {
 
     private func handleScrubbingChanged(_ scrubbing: Bool) {
         if scrubbing { controlsHideTask?.cancel() }
-        else { refreshControls() }
+        else if areControlsVisible { refreshControls() }
     }
 
     private func handlePlayerPresentationChanged(_ active: Bool) {
@@ -1663,6 +1681,7 @@ struct PlayerScreen: View {
     private func touchInteractionLayer(
         size: CGSize,
         isPortraitLayout: Bool,
+        isPortraitSplitLayout: Bool,
         closeEdgeWidth: CGFloat
     ) -> some View {
         Color.clear
@@ -1702,7 +1721,13 @@ struct PlayerScreen: View {
             .simultaneousGesture(
                 DragGesture(minimumDistance: 12, coordinateSpace: .local)
                     .onChanged { value in
-                        handlePlayerDrag(value, size: size, isPortraitLayout: isPortraitLayout, closeEdgeWidth: closeEdgeWidth)
+                        handlePlayerDrag(
+                            value,
+                            size: size,
+                            isPortraitLayout: isPortraitLayout,
+                            isPortraitSplitLayout: isPortraitSplitLayout,
+                            closeEdgeWidth: closeEdgeWidth
+                        )
                     }
                     .onEnded { _ in
                         finishPlayerDrag()
@@ -1736,11 +1761,12 @@ struct PlayerScreen: View {
         _ value: DragGesture.Value,
         size: CGSize,
         isPortraitLayout: Bool,
+        isPortraitSplitLayout: Bool,
         closeEdgeWidth: CGFloat
     ) {
         controlsHideTask?.cancel()
         let translation = value.translation
-        let isClosingFromLeftEdge = isPortraitLayout
+        let isClosingFromLeftEdge = isPortraitLayout && !isPortraitSplitLayout
             && value.startLocation.x <= closeEdgeWidth
             && translation.width > 0
             && translation.width > abs(translation.height)
@@ -1775,7 +1801,6 @@ struct PlayerScreen: View {
         switch touchGesture {
         case .some(.seek):
             seekValue = min(1, max(0, touchStartProgress + Double(translation.width / max(1, size.width))))
-            showInteractionHUD("进度 \(Int(seekValue * 100))%", symbol: "timeline.selection")
         case .some(.brightness):
             let level = min(1, max(0, touchStartBrightness - Double(translation.height / max(1, size.height))))
             foregroundScreen?.brightness = CGFloat(level)
@@ -1792,6 +1817,7 @@ struct PlayerScreen: View {
     private func finishPlayerDrag() {
         if touchGesture == .seek, session.canSeek {
             session.seek(to: seekValue)
+            session.play()
         }
         isScrubbing = false
         touchGesture = nil
@@ -1984,7 +2010,7 @@ struct PlayerScreen: View {
             landscapeControls(safeAreaInsets: geometry.safeAreaInsets)
         }
         #else
-        landscapeControls(safeAreaInsets: geometry.safeAreaInsets)
+        tvPlaybackControls(safeAreaInsets: geometry.safeAreaInsets)
         #endif
     }
 
@@ -2137,6 +2163,215 @@ struct PlayerScreen: View {
         #endif
     }
 
+    #if os(tvOS)
+    private func tvPlaybackControls(safeAreaInsets: EdgeInsets) -> some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .bottom, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let itemTitle = session.request.item?.title, itemTitle != session.title {
+                            Text(itemTitle)
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.78))
+                                .lineLimit(1)
+                        }
+                        Text(session.title)
+                            .font(.system(size: 28, weight: .bold))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 24)
+
+                    Text(tvPlaybackMetadata)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.8))
+                        .lineLimit(1)
+                        .multilineTextAlignment(.trailing)
+                }
+
+                if session.canSeek {
+                    HStack(spacing: 12) {
+                        Text(isScrubbing
+                             ? Self.clockString(fraction: seekValue, duration: session.durationText)
+                             : session.elapsedText)
+                            .frame(minWidth: 62, alignment: .leading)
+                        tvProgressControl
+                        Text(tvRemainingTime)
+                            .frame(minWidth: 70, alignment: .trailing)
+                    }
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.white)
+                }
+
+                GeometryReader { geometry in
+                    let centerWidth: CGFloat = session.status == "播放失败" ? 520 : (showsQueueNavigation ? 440 : 288)
+                    let sideWidth = max(0, (geometry.size.width - centerWidth) / 2)
+
+                    HStack(spacing: 0) {
+                        tvPlaybackLeadingActions
+                            .frame(width: sideWidth, alignment: .leading)
+
+                        primaryPlaybackControls
+                            .frame(width: centerWidth, alignment: .center)
+
+                        tvPlaybackTrailingActions
+                            .frame(width: sideWidth, alignment: .trailing)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .focusSection()
+                }
+                .frame(height: session.status == "播放失败" ? 190 : 88)
+            }
+            .padding(.horizontal, 88)
+            .padding(.top, 22)
+            .padding(.bottom, max(44, safeAreaInsets.bottom + 24))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(alignment: .bottom) {
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .black.opacity(0.28), location: 0.35),
+                    .init(color: .black.opacity(0.82), location: 1)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 420)
+            .frame(maxHeight: .infinity, alignment: .bottom)
+            .allowsHitTesting(false)
+        }
+    }
+
+    private var tvPlaybackMetadata: String {
+        if let liveContext = session.request.liveContext {
+            return [liveContext.currentGroup?.name, liveContext.currentSource?.name]
+                .compactMap { $0 }
+                .filter { !$0.isEmpty }
+                .joined(separator: " · ")
+        }
+
+        let item = session.request.item
+        return [item?.category, item?.year, item?.sourceName]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+    }
+
+    private var tvRemainingTime: String {
+        guard session.seekDurationMilliseconds > 0 else { return session.durationText }
+        let current = isScrubbing
+            ? Int(Double(session.seekDurationMilliseconds) * seekValue)
+            : session.currentMilliseconds
+        let remaining = max(0, session.seekDurationMilliseconds - current)
+        return "−" + Self.clockString(milliseconds: remaining)
+    }
+
+    private var tvPlaybackLeadingActions: some View {
+        HStack(spacing: 12) {
+            if liveContext != nil {
+                Button { toggleLivePanel(.guide) } label: {
+                    trackMenuLabel(title: "节目单", systemImage: "list.bullet.rectangle")
+                }
+                .playerControlButtonStyle()
+                .focused($focusedOverlayControl, equals: "guide")
+                .accessibilityLabel("显示节目单")
+
+                Button { toggleLivePanel(.sources) } label: {
+                    trackMenuLabel(title: "线路", systemImage: "antenna.radiowaves.left.and.right")
+                }
+                .playerControlButtonStyle()
+                .focused($focusedOverlayControl, equals: "sources")
+                .accessibilityLabel("显示可切换线路")
+            } else if session.request.item != nil {
+                Button { toggleLivePanel(.playlist) } label: {
+                    trackMenuLabel(title: "片源与选集", systemImage: "list.bullet.rectangle")
+                }
+                .playerControlButtonStyle()
+                .focused($focusedOverlayControl, equals: "playlist")
+                .accessibilityLabel("显示片源和选集")
+            }
+
+            if session.status != "播放失败" {
+                if liveContext == nil { aspectRatioMenu }
+                if session.request.availableLines.count > 1 { lineMenu }
+            }
+
+            tvMoreOptionsButton
+        }
+    }
+
+    private var tvPlaybackTrailingActions: some View {
+        HStack(spacing: 12) {
+            if !session.subtitleTracks.isEmpty {
+                trackMenu(
+                    title: "字幕",
+                    systemImage: "captions.bubble",
+                    options: session.subtitleTracks,
+                    selectedIndex: session.selectedSubtitleTrackIndex
+                ) { session.selectSubtitleTrack($0) }
+            }
+
+            if !session.request.isLive { danmakuMenu }
+
+            if let item = session.request.item {
+                Button { catalog.toggleFavorite(item) } label: {
+                    trackMenuLabel(
+                        title: catalog.isFavorite(item) ? "取消收藏" : "收藏",
+                        systemImage: catalog.isFavorite(item) ? "heart.fill" : "heart"
+                    )
+                }
+                .playerControlButtonStyle()
+                .focused($focusedOverlayControl, equals: "favorite")
+                .accessibilityLabel(catalog.isFavorite(item) ? "取消收藏" : "收藏")
+            }
+        }
+    }
+
+    private var tvMoreOptionsButton: some View {
+        Button {
+            var options: [PlayerMenuOption] = []
+            if !session.audioTracks.isEmpty {
+                options += session.audioTracks.map { track in
+                    PlayerMenuOption(
+                        id: "audio:\(track.index)",
+                        title: track.index == session.selectedAudioTrackIndex ? "✓  \(track.title)" : track.title,
+                        action: { session.selectAudioTrack(track.index) }
+                    )
+                }
+            }
+            if liveContext != nil {
+                options += Self.aspectRatios.map { option in
+                    PlayerMenuOption(
+                        id: "aspect:\(option.id)",
+                        title: option.label == session.aspectRatioLabel
+                            ? "✓  画面比例：\(option.label)"
+                            : "画面比例：\(option.label)",
+                        action: { selectAspectRatio(option) }
+                    )
+                }
+            }
+            options += [0.75, 1.0, 1.25, 1.5, 2.0].map { rate in
+                PlayerMenuOption(
+                    id: "rate:\(rate)",
+                    title: rate == 1 ? "正常速度" : Self.rateLabel(rate),
+                    action: { session.setPlaybackRate(Float(rate)) }
+                )
+            }
+            presentPlayerMenu(title: "更多播放选项", options: options)
+        } label: {
+            trackMenuLabel(title: "更多播放选项", systemImage: "ellipsis")
+        }
+        .playerControlButtonStyle()
+        .focused($focusedOverlayControl, equals: "more")
+        .accessibilityLabel("更多播放选项")
+    }
+    #endif
+
     @ViewBuilder
     private var primaryPlaybackControls: some View {
         if session.status == "播放失败" { failureCard }
@@ -2219,9 +2454,6 @@ struct PlayerScreen: View {
                 .accessibilityLabel("选择输出设备")
             #endif
         }
-        #if os(tvOS)
-        .focusSection()
-        #endif
     }
 
     #if os(iOS)
@@ -2549,7 +2781,6 @@ struct PlayerScreen: View {
                                 .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
                                 .contentShape(Rectangle())
                             }
-                            .platformFocusableButtonStyle()
                             .listRowBackground(isSelected ? Color.tvboxSelection.opacity(0.24) : Color.clear)
                             .focused($livePanelFocusTarget, equals: "vod:line:\(line.id)")
                             .disabled(isSwitchingEpisode)
@@ -2578,7 +2809,6 @@ struct PlayerScreen: View {
                             .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
                             .contentShape(Rectangle())
                         }
-                        .platformFocusableButtonStyle()
                         .listRowBackground(isSelected ? Color.tvboxSelection.opacity(0.24) : Color.clear)
                         .focused($livePanelFocusTarget, equals: "vod:\(episode.id)")
                         .onAppear {
@@ -2895,7 +3125,6 @@ struct PlayerScreen: View {
                                     .frame(maxWidth: .infinity, minHeight: TVBoxTypography.readable(42, minimum: 68), alignment: .leading)
                                     .padding(.horizontal, 9)
                             }
-                            .platformFocusableButtonStyle()
                             .listRowBackground(group.id == selectedLiveGroup?.id ? Color.tvboxSelection.opacity(0.18) : Color.clear)
                             .listRowInsets(EdgeInsets(
                                 top: TVBoxTypography.readable(3, minimum: 6),
@@ -2929,7 +3158,11 @@ struct PlayerScreen: View {
                     }
                 }
             }
-            .frame(width: TVBoxTypography.readable(112, minimum: 220), alignment: .topLeading)
+            #if os(tvOS)
+            .frame(width: TVBoxTypography.readable(180, minimum: 260), alignment: .topLeading)
+            #else
+            .frame(width: 112, alignment: .topLeading)
+            #endif
 
             Divider().padding(.horizontal, 8)
 
@@ -2951,7 +3184,12 @@ struct PlayerScreen: View {
                                 }
                                 Text(channel.name)
                                     .font(.system(size: TVBoxTypography.readable(13), weight: .semibold))
+                                    #if os(tvOS)
+                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    #else
                                     .lineLimit(1)
+                                    #endif
                                 Spacer(minLength: 0)
                                 if channel.id == liveContext?.channelID && selectedLiveGroup?.id == liveContext?.groupID {
                                     Image(systemName: "waveform")
@@ -2961,7 +3199,6 @@ struct PlayerScreen: View {
                             }
                             .foregroundStyle(Color(uiColor: .label))
                         }
-                        .platformFocusableButtonStyle()
                         .listRowBackground(channel.id == liveContext?.channelID && selectedLiveGroup?.id == liveContext?.groupID
                                            ? Color.tvboxSelection.opacity(0.18) : Color.clear)
                         #if os(tvOS)
@@ -2973,7 +3210,11 @@ struct PlayerScreen: View {
                 .listStyle(.plain)
                 .platformListBackgroundHidden()
             }
-            .frame(width: TVBoxTypography.readable(148, minimum: 310), alignment: .topLeading)
+            #if os(tvOS)
+            .frame(minWidth: TVBoxTypography.readable(180, minimum: 310), maxWidth: TVBoxTypography.readable(240, minimum: 420), alignment: .topLeading)
+            #else
+            .frame(width: 148, alignment: .topLeading)
+            #endif
 
             Divider().padding(.horizontal, 8)
 
@@ -3058,7 +3299,6 @@ struct PlayerScreen: View {
                             }
                         }
                     }
-                    .platformFocusableButtonStyle()
                     .listRowBackground(source.id == liveContext?.sourceID ? Color.tvboxSelection.opacity(0.18) : Color.clear)
                     #if os(tvOS)
                     .focused($livePanelFocusTarget, equals: "source:\(source.id)")
@@ -3522,9 +3762,6 @@ struct PlayerScreen: View {
                     .disabled(queueNavigationIndex + 1 >= session.request.queue.count || isSwitchingEpisode)
             }
         }
-        #if os(tvOS)
-        .focusSection()
-        #endif
     }
 
     private func controlButton(title: String, systemImage: String, action: @escaping () -> Void) -> some View {
@@ -3862,20 +4099,42 @@ struct PlayerScreen: View {
     private var tvProgressControl: some View {
         let fraction = min(1, max(0, isScrubbing ? seekValue : session.progress))
 
-        return Button {} label: {
-            ProgressView(value: fraction)
-                .progressViewStyle(.linear)
-                .tint(Color.tvboxSelection)
-                .frame(maxWidth: .infinity, minHeight: 48)
-                .contentShape(Rectangle())
-                .background(
-                    focusedOverlayControl == "progress" ? Color.white.opacity(0.12) : Color.clear,
-                    in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(.white.opacity(focusedOverlayControl == "progress" ? 0.8 : 0), lineWidth: 2)
+        return Button(action: finishProgressScrubbing) {
+            GeometryReader { geometry in
+                let trackWidth = geometry.size.width
+                let isFocused = focusedOverlayControl == "progress"
+                let thumbSize: CGFloat = isScrubbing ? 24 : (isFocused ? 22 : 18)
+                let thumbOffset = min(max(0, trackWidth * fraction - thumbSize / 2), max(0, trackWidth - thumbSize))
+
+                ZStack(alignment: .leading) {
+                    ProgressView(value: fraction)
+                        .progressViewStyle(.linear)
+                        .tint(Color.tvboxSelection)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 8)
+
+                    Circle()
+                        .fill(.white)
+                        .overlay {
+                            Circle().strokeBorder(
+                                isFocused ? Color.tvboxSelection : .black.opacity(0.24),
+                                lineWidth: isFocused ? 3 : 1
+                            )
+                        }
+                        .frame(width: thumbSize, height: thumbSize)
+                        .shadow(color: .black.opacity(0.4), radius: 3, y: 1)
+                        .offset(x: thumbOffset)
+                        .frame(maxHeight: .infinity)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 48)
+            .contentShape(Rectangle())
+            .background(
+                focusedOverlayControl == "progress" ? Color.white.opacity(0.06) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
         }
         .buttonStyle(.plain)
         .focusable()
@@ -3883,11 +4142,12 @@ struct PlayerScreen: View {
         .focusEffectDisabled()
         .disabled(!session.canSeek)
         .accessibilityLabel("播放进度")
-        .accessibilityValue("\(session.elapsedText) / \(session.durationText)")
+        .accessibilityValue("\(isScrubbing ? Self.clockString(fraction: seekValue, duration: session.durationText) : session.elapsedText) / \(session.durationText)")
+        .accessibilityHint("使用左右方向键调整，按下选择键确认")
         .accessibilityAdjustableAction { direction in
             switch direction {
-            case .increment: session.seek(by: 15)
-            case .decrement: session.seek(by: -15)
+            case .increment: previewProgress(bySeconds: 15)
+            case .decrement: previewProgress(bySeconds: -15)
             @unknown default: break
             }
         }
@@ -3901,7 +4161,7 @@ struct PlayerScreen: View {
     }
 
     private func previewProgress(bySeconds seconds: Double) {
-        guard session.seekDurationMilliseconds > 0 else { return }
+        guard session.canSeek, session.seekDurationMilliseconds > 0 else { return }
         revealControls()
         if !isScrubbing {
             seekValue = session.progress
@@ -3909,17 +4169,9 @@ struct PlayerScreen: View {
         }
         let delta = seconds * 1_000 / Double(session.seekDurationMilliseconds)
         seekValue = min(1, max(0, seekValue + delta))
-        progressScrubCommitTask?.cancel()
-        progressScrubCommitTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 350_000_000)
-            guard !Task.isCancelled else { return }
-            finishProgressScrubbing()
-        }
     }
 
     private func finishProgressScrubbing() {
-        progressScrubCommitTask?.cancel()
-        progressScrubCommitTask = nil
         guard isScrubbing else { return }
         isScrubbing = false
         session.seek(to: seekValue)
@@ -4158,6 +4410,17 @@ struct PlayerScreen: View {
         guard duration != "LIVE", !parts.isEmpty else { return "00:00" }
         let total = parts.reduce(0) { $0 * 60 + $1 }
         let seconds = Int(Double(total) * min(1, max(0, fraction)))
+        let hours = seconds / 3_600
+        let minutes = (seconds / 60) % 60
+        let remainingSeconds = seconds % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, remainingSeconds)
+        }
+        return String(format: "%02d:%02d", seconds / 60, remainingSeconds)
+    }
+
+    private static func clockString(milliseconds: Int) -> String {
+        let seconds = max(0, milliseconds / 1_000)
         let hours = seconds / 3_600
         let minutes = (seconds / 60) % 60
         let remainingSeconds = seconds % 60
