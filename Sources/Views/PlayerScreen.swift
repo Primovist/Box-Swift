@@ -1453,15 +1453,13 @@ struct PlayerScreen: View {
 
                 #if os(tvOS)
                 if !areControlsVisible && landscapeLivePanel == nil {
-                    Button { revealControls() } label: {
-                        Color.clear
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
+                    Color.clear
+                    .contentShape(Rectangle())
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .focusable()
                     .focused($playerSurfaceFocused)
                     .focusEffectDisabled()
+                    .onTapGesture { revealControls() }
                     .accessibilityLabel("显示播放控件")
                     .zIndex(2)
                     .onMoveCommand { _ in revealControls() }
@@ -3442,15 +3440,18 @@ struct PlayerScreen: View {
                 Button { toggleLivePanel(panel) } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.white)
                         .frame(width: 40, height: 40)
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 #if os(iOS)
+                .foregroundStyle(.white)
                 .glassEffect(.regular.interactive(), in: Circle())
                 #else
-                .buttonStyle(.glass)
+                .foregroundStyle(focusedOverlayControl == "panelClose" ? .black : .white)
+                .background(focusedOverlayControl == "panelClose" ? Color.white : Color.black.opacity(0.84), in: Circle())
+                .overlay(Circle().strokeBorder(.white.opacity(focusedOverlayControl == "panelClose" ? 0.9 : 0.2), lineWidth: focusedOverlayControl == "panelClose" ? 3 : 1))
+                .focused($focusedOverlayControl, equals: "panelClose")
                 #endif
                 .accessibilityLabel("完成")
             }
@@ -4483,11 +4484,27 @@ private extension View {
             .foregroundStyle(.white)
             .glassEffect(.regular.interactive(), in: Capsule())
         #else
-        if isAccent {
-            self.buttonStyle(.glassProminent)
-        } else {
-            self.buttonStyle(.glass)
-        }
+        self.buttonStyle(TVPlayerControlButtonStyle(isAccent: isAccent))
         #endif
     }
 }
+
+#if os(tvOS)
+private struct TVPlayerControlButtonStyle: ButtonStyle {
+    let isAccent: Bool
+
+    @Environment(\.isFocused) private var isFocused
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        let highlighted = isAccent || isFocused || configuration.isPressed
+        return configuration.label
+            .foregroundStyle(highlighted ? Color.black : Color.white)
+            .background(highlighted ? Color.white : Color.black.opacity(0.84), in: Capsule())
+            .overlay(Capsule().strokeBorder(.white.opacity(highlighted ? 0.92 : 0.24), lineWidth: highlighted ? 3 : 1))
+            .opacity(isEnabled ? 1 : 0.48)
+            .scaleEffect(isFocused ? 1.08 : 1)
+            .animation(.easeOut(duration: 0.15), value: isFocused)
+    }
+}
+#endif

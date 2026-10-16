@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(tvOS)
+import UIKit
+#endif
 
 private struct DanmakuFieldFrameKey: PreferenceKey {
     static var defaultValue = CGRect.zero
@@ -11,7 +14,10 @@ private struct DanmakuFieldFrameKey: PreferenceKey {
 #if os(tvOS)
 struct DanmakuSearchPresentationSizing: PresentationSizing {
     func proposedSize(for subview: PresentationSizingRoot, context: PresentationSizingContext) -> ProposedViewSize {
-        ProposedViewSize(width: 1_600, height: 900)
+        let screenSize = UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.screen.bounds.size }
+            .first ?? UIScreen.main.bounds.size
+        return ProposedViewSize(width: screenSize.width * 0.9, height: screenSize.height * 0.9)
     }
 }
 
@@ -218,7 +224,7 @@ struct DanmakuSearchView: View {
 
     private var searchContentMaxWidth: CGFloat {
         #if os(tvOS)
-        1_600
+        1_700
         #else
         920
         #endif
@@ -226,7 +232,7 @@ struct DanmakuSearchView: View {
 
     private var resultsMaxWidth: CGFloat {
         #if os(tvOS)
-        1_500
+        1_620
         #else
         880
         #endif
