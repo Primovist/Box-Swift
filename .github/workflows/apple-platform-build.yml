@@ -69,16 +69,28 @@ jobs:
           import sys
 
           app_path = pathlib.Path(sys.argv[1])
+          target_path = app_path / "Frameworks/libshaderc_combined.framework/Info.plist"
+          if not target_path.is_file():
+              raise SystemExit(f"Missing FFmpegKit framework plist: {target_path}")
+          with target_path.open("rb") as source:
+              target_info = plistlib.load(source)
+          original_id = "com.kintan.ksplayer.libshaderc_combined"
+          normalized_id = "com.kintan.ksplayer.libshaderc-combined"
+          current_id = target_info.get("CFBundleIdentifier")
+          if current_id == original_id:
+              target_info["CFBundleIdentifier"] = normalized_id
+              with target_path.open("wb") as destination:
+                  plistlib.dump(target_info, destination)
+              print(f"Normalized {target_path}: {original_id} -> {normalized_id}")
+          elif current_id != normalized_id:
+              raise SystemExit(f"Unexpected libshaderc bundle identifier: {current_id!r}")
+
           for plist_path in app_path.glob("Frameworks/*.framework/Info.plist"):
               with plist_path.open("rb") as source:
                   info = plistlib.load(source)
               bundle_id = info.get("CFBundleIdentifier")
-              if isinstance(bundle_id, str):
-                  normalized = re.sub(r"[^A-Za-z0-9.-]", "-", bundle_id)
-                  if normalized != bundle_id:
-                      info["CFBundleIdentifier"] = normalized
-                      with plist_path.open("wb") as destination:
-                          plistlib.dump(info, destination)
+              if not isinstance(bundle_id, str) or not re.fullmatch(r"[A-Za-z0-9.-]+", bundle_id):
+                  raise SystemExit(f"Invalid framework bundle identifier in {plist_path}: {bundle_id!r}")
           PY
           APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")
           BUILD_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")
@@ -150,16 +162,28 @@ jobs:
           import sys
 
           app_path = pathlib.Path(sys.argv[1])
+          target_path = app_path / "Frameworks/libshaderc_combined.framework/Info.plist"
+          if not target_path.is_file():
+              raise SystemExit(f"Missing FFmpegKit framework plist: {target_path}")
+          with target_path.open("rb") as source:
+              target_info = plistlib.load(source)
+          original_id = "com.kintan.ksplayer.libshaderc_combined"
+          normalized_id = "com.kintan.ksplayer.libshaderc-combined"
+          current_id = target_info.get("CFBundleIdentifier")
+          if current_id == original_id:
+              target_info["CFBundleIdentifier"] = normalized_id
+              with target_path.open("wb") as destination:
+                  plistlib.dump(target_info, destination)
+              print(f"Normalized {target_path}: {original_id} -> {normalized_id}")
+          elif current_id != normalized_id:
+              raise SystemExit(f"Unexpected libshaderc bundle identifier: {current_id!r}")
+
           for plist_path in app_path.glob("Frameworks/*.framework/Info.plist"):
               with plist_path.open("rb") as source:
                   info = plistlib.load(source)
               bundle_id = info.get("CFBundleIdentifier")
-              if isinstance(bundle_id, str):
-                  normalized = re.sub(r"[^A-Za-z0-9.-]", "-", bundle_id)
-                  if normalized != bundle_id:
-                      info["CFBundleIdentifier"] = normalized
-                      with plist_path.open("wb") as destination:
-                          plistlib.dump(info, destination)
+              if not isinstance(bundle_id, str) or not re.fullmatch(r"[A-Za-z0-9.-]+", bundle_id):
+                  raise SystemExit(f"Invalid framework bundle identifier in {plist_path}: {bundle_id!r}")
           PY
           APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")
           BUILD_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")
