@@ -1,14 +1,5 @@
 import SwiftUI
 
-private struct SettingsFieldFrameKey: PreferenceKey {
-    static var defaultValue = CGRect.zero
-
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
-        let next = nextValue()
-        if next != .zero { value = next }
-    }
-}
-
 struct SettingsView: View {
     @EnvironmentObject private var catalog: CatalogStore
     @AppStorage("tvbox.autoNext") private var autoNextEpisode = true
@@ -22,7 +13,6 @@ struct SettingsView: View {
     @State private var cacheMessage: String?
     @State private var isConfirmingServerRemoval = false
     @State private var isConfirmingCacheClear = false
-    @State private var endpointFrame = CGRect.zero
 
     private var liveChannelCountText: String {
         if catalog.isLoadingLive { return "载入中…" }
@@ -106,6 +96,7 @@ struct SettingsView: View {
                                 Text(site.name).tag(site.key)
                             }
                         }
+                        .pickerStyle(.menu)
                     } else {
                         Text(configuration.sites.isEmpty
                              ? "此配置没有可用的视频站点。"
@@ -141,6 +132,7 @@ struct SettingsView: View {
                         Text(seconds == 0 ? "关闭" : "\(seconds) 秒").tag(seconds)
                     }
                 }
+                .pickerStyle(.menu)
                 Text("断点续播优先于片头跳过。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -158,6 +150,7 @@ struct SettingsView: View {
                     Text("5 秒").tag(5000)
                     Text("10 秒").tag(10000)
                 }
+                .pickerStyle(.menu)
                 Text("较长缓存可能减少网络波动导致的卡顿，也会增加开播和直播延迟。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -167,6 +160,7 @@ struct SettingsView: View {
                     Text("自动检测").tag(-1)
                     Text("强制开启").tag(1)
                 }
+                .pickerStyle(.menu)
                 Text("默认关闭。自动检测和强制开启会启用 VLC 的去隔行滤镜，效果与稳定性取决于设备和视频。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -185,14 +179,6 @@ struct SettingsView: View {
             }
         }
         #if os(iOS)
-        .simultaneousGesture(
-            SpatialTapGesture(coordinateSpace: .global)
-                .onEnded { tap in
-                    guard !endpointFrame.contains(tap.location) else { return }
-                    isEndpointFocused = false
-                }
-        )
-        .onPreferenceChange(SettingsFieldFrameKey.self) { endpointFrame = $0 }
         .scrollDismissesKeyboard(.interactively)
         #endif
         .formStyle(.grouped)
@@ -248,11 +234,6 @@ struct SettingsView: View {
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .keyboardType(.URL)
-            .background {
-                GeometryReader { proxy in
-                    Color.clear.preference(key: SettingsFieldFrameKey.self, value: proxy.frame(in: .global))
-                }
-            }
         #else
         TextField(title, text: text)
             .focused($isEndpointFocused)

@@ -2155,6 +2155,7 @@ struct PlayerScreen: View {
                     additionalPlaybackOptions
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
                 .clipped()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -2263,10 +2264,17 @@ struct PlayerScreen: View {
                 GeometryReader { geometry in
                     let centerWidth: CGFloat = session.status == "播放失败" ? 520 : (showsQueueNavigation ? 440 : 288)
                     let sideWidth = max(0, (geometry.size.width - centerWidth) / 2)
+                    let usesCompactSideActions = sideWidth < 340
 
                     HStack(spacing: 0) {
-                        tvPlaybackLeadingActions
-                            .frame(width: sideWidth, alignment: .leading)
+                        Group {
+                            if usesCompactSideActions {
+                                tvMoreOptionsButton
+                            } else {
+                                tvPlaybackLeadingActions
+                            }
+                        }
+                        .frame(width: sideWidth, alignment: .leading)
 
                         primaryPlaybackControls
                             .frame(width: centerWidth, alignment: .center)
@@ -2398,15 +2406,33 @@ struct PlayerScreen: View {
                 }
             }
             if liveContext != nil {
-                options += Self.aspectRatios.map { option in
-                    PlayerMenuOption(
-                        id: "aspect:\(option.id)",
-                        title: option.label == session.aspectRatioLabel
-                            ? "✓  画面比例：\(option.label)"
-                            : "画面比例：\(option.label)",
-                        action: { selectAspectRatio(option) }
-                    )
-                }
+                options += [
+                    PlayerMenuOption(id: "live:guide", title: "节目单", action: { toggleLivePanel(.guide) }),
+                    PlayerMenuOption(id: "live:sources", title: "频道列表", action: { toggleLivePanel(.sources) })
+                ]
+            } else if session.request.item != nil {
+                options.append(PlayerMenuOption(
+                    id: "vod:playlist",
+                    title: "片源与选集",
+                    action: { toggleLivePanel(.playlist) }
+                ))
+            }
+
+            options += Self.aspectRatios.map { option in
+                PlayerMenuOption(
+                    id: "aspect:\(option.id)",
+                    title: option.label == session.aspectRatioLabel
+                        ? "✓  画面比例：\(option.label)"
+                        : "画面比例：\(option.label)",
+                    action: { selectAspectRatio(option) }
+                )
+            }
+            options += session.request.availableLines.map { line in
+                PlayerMenuOption(
+                    id: "line:\(line.id)",
+                    title: line.id == session.request.lineID ? "✓  线路：\(line.flag)" : "线路：\(line.flag)",
+                    action: { switchPlaybackLine(line) }
+                )
             }
             options += [0.75, 1.0, 1.25, 1.5, 2.0].map { rate in
                 PlayerMenuOption(
@@ -2537,7 +2563,7 @@ struct PlayerScreen: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.white)
-                .glassEffect(.regular.interactive(), in: Circle())
+                .glassEffect(.regular, in: Circle())
                 .accessibilityLabel("开始画中画播放")
             }
 
@@ -3470,7 +3496,7 @@ struct PlayerScreen: View {
                 .buttonStyle(.plain)
                 #if os(iOS)
                 .foregroundStyle(.white)
-                .glassEffect(.regular.interactive(), in: Circle())
+                .glassEffect(.regular, in: Circle())
                 #else
                 .foregroundStyle(focusedOverlayControl == "panelClose" ? .black : .white)
                 .background(focusedOverlayControl == "panelClose" ? Color.white : Color.black.opacity(0.84), in: Circle())
@@ -3758,6 +3784,7 @@ struct PlayerScreen: View {
                     aspectRatioMenu
                     ScrollView(.horizontal, showsIndicators: false) { additionalPlaybackOptions }
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                         .clipped()
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -4510,7 +4537,7 @@ private extension View {
         #if os(iOS)
         self.buttonStyle(.plain)
             .foregroundStyle(.white)
-            .glassEffect(.regular.interactive(), in: Capsule())
+            .glassEffect(.regular, in: Capsule())
         #else
         self.buttonStyle(TVPlayerControlButtonStyle(isAccent: isAccent))
         #endif
