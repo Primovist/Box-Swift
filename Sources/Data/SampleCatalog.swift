@@ -9,7 +9,7 @@ enum SampleCatalog {
             title: "网络视频演示",
             category: "推荐",
             subtitle: "HLS 播放测试",
-            summary: "内置演示条目。选择“演示流”可测试 VLC 播放器；也可以在设置中载入 TVBox JSON 目录查看视频源。",
+            summary: "内置演示条目。选择“演示流”可测试 AVPlayer；也可以在设置中载入 TVBox JSON 目录查看视频源。",
             posterURL: nil,
             episodes: [
                 Episode(id: "demo-hls", title: "演示流 · HLS", url: streamURL, headers: [:])

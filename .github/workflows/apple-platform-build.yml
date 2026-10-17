@@ -2,7 +2,7 @@ name: Apple platform builds
 
 on:
   push:
-    branches: [main]
+    branches: [main, test/avplayer]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -26,15 +26,6 @@ jobs:
 
       - name: Show Xcode version
         run: xcodebuild -version
-
-      - name: Resolve Swift packages
-        id: resolve-packages
-        run: >-
-          xcodebuild
-          -resolvePackageDependencies
-          -project TVBoxSwift.xcodeproj
-          -scheme TVBox-iOS
-          -derivedDataPath "$RUNNER_TEMP/DerivedData"
 
       - name: Build iOS
         id: build-ios
@@ -99,7 +90,7 @@ jobs:
 
       - name: Build tvOS
         id: build-tvos
-        if: ${{ !cancelled() && steps.resolve-packages.outcome == 'success' }}
+        if: ${{ !cancelled() }}
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -205,7 +196,7 @@ jobs:
   publish:
     name: Publish GitHub Release
     needs: build
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test/avplayer')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -259,20 +250,32 @@ jobs:
               output.write(f"version={version}\n")
               output.write(f"build_number={build_number}\n")
               output.write(f"tag=v{version}-build.{build_number}\n")
+              output.write(f"test_tag=avplayer-test-build.{build_number}\n")
           PY
 
       - name: Publish unsigned IPAs
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release-version.outputs.tag }}
+          TEST_RELEASE_TAG: ${{ steps.release-version.outputs.test_tag }}
           RELEASE_VERSION: ${{ steps.release-version.outputs.version }}
           BUILD_NUMBER: ${{ steps.release-version.outputs.build_number }}
+          IS_AVPLAYER_TEST: ${{ github.ref == 'refs/heads/test/avplayer' }}
         run: |
           set -euo pipefail
-          TAG="$RELEASE_TAG"
-          TITLE="TV Box $RELEASE_VERSION (Build $BUILD_NUMBER)"
+          if [[ "$IS_AVPLAYER_TEST" == "true" ]]; then
+            TAG="$TEST_RELEASE_TAG"
+            TITLE="TV Box AVPlayer test (Build $BUILD_NUMBER)"
+            RELEASE_FLAGS=(--prerelease --latest=false)
+            NOTES="Experimental AVPlayer build from $GITHUB_SHA. Unsigned IPAs require signing before device installation. RTSP/RTMP, non-HTTP media formats, and Referer/custom HTTP headers are not supported by this build."
+          else
+            TAG="$RELEASE_TAG"
+            TITLE="TV Box $RELEASE_VERSION (Build $BUILD_NUMBER)"
+            RELEASE_FLAGS=()
+            NOTES="iOS 和 tvOS 未签名 IPA 构建产物。\n\n源码提交：\`$GITHUB_SHA\`"
+          fi
           NOTES_FILE="$RUNNER_TEMP/release-notes.md"
-          printf 'iOS 和 tvOS 未签名 IPA 构建产物。\n\n源码提交：`%s`\n' "$GITHUB_SHA" > "$NOTES_FILE"
+          printf '%b\n' "$NOTES" > "$NOTES_FILE"
 
           set +e
           REMOTE_TAGS=$(git ls-remote --exit-code --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}" 2>&1)
@@ -303,7 +306,8 @@ jobs:
               --title "$TITLE" \
               --notes-file "$NOTES_FILE" \
               --target "$GITHUB_SHA" \
-              --repo "$GITHUB_REPOSITORY"
+              --repo "$GITHUB_REPOSITORY" \
+              "${RELEASE_FLAGS[@]}"
           fi
 
           EXISTING_ASSETS=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
@@ -318,4 +322,4 @@ jobs:
           if [[ ${#NEW_ASSETS[@]} -gt 0 ]]; then
             gh release upload "$TAG" "${NEW_ASSETS[@]}" --repo "$GITHUB_REPOSITORY"
           fi
-          gh release edit "$TAG" --draft=false --title "$TITLE" --notes-file "$NOTES_FILE" --repo "$GITHUB_REPOSITORY"
+          gh release edit "$TAG" --draft=false --title "$TITLE" --notes-file "$NOTES_FILE" --repo "$GITHUB_REPOSITORY" "${RELEASE_FLAGS[@]}"
