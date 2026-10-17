@@ -28,9 +28,49 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/DerivedData/SourcePackages
-          key: ${{ runner.os }}-xcode26-swiftpm-${{ hashFiles('TVBoxSwift.xcodeproj/project.pbxproj', 'TVBoxSwift.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          key: ${{ runner.os }}-xcode26-swiftpm-ffmpeg-bundleid-v1-${{ hashFiles('TVBoxSwift.xcodeproj/project.pbxproj', 'TVBoxSwift.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
           restore-keys: |
-            ${{ runner.os }}-xcode26-swiftpm-
+            ${{ runner.os }}-xcode26-swiftpm-ffmpeg-bundleid-v1-
+
+      - name: Resolve KSPlayer packages and repair framework metadata
+        if: ${{ github.ref == 'refs/heads/test/avplayer' || github.head_ref == 'test/avplayer' }}
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -resolvePackageDependencies \
+            -project TVBoxSwift.xcodeproj \
+            -scheme TVBox-iOS \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData"
+          python3 - "$RUNNER_TEMP/DerivedData/SourcePackages/checkouts/FFmpegKit/Sources/libshaderc_combined.xcframework" <<'PY'
+          import pathlib
+          import plistlib
+          import sys
+
+          xcframework_path = pathlib.Path(sys.argv[1])
+          original_id = "com.kintan.ksplayer.libshaderc_combined"
+          normalized_id = "com.kintan.ksplayer.libshaderc-combined"
+          found = {"ios": [], "tvos": []}
+          changed = {"ios": 0, "tvos": 0}
+          for plist_path in xcframework_path.glob("*/libshaderc_combined.framework/Info.plist"):
+              slice_name = plist_path.parents[1].name
+              platform = "ios" if slice_name.startswith("ios-") else "tvos" if slice_name.startswith("tvos-") else None
+              if platform is None:
+                  continue
+              found[platform].append(slice_name)
+              with plist_path.open("rb") as source:
+                  info = plistlib.load(source)
+              current_id = info.get("CFBundleIdentifier")
+              if current_id == original_id:
+                  info["CFBundleIdentifier"] = normalized_id
+                  with plist_path.open("wb") as destination:
+                      plistlib.dump(info, destination)
+                  changed[platform] += 1
+              elif current_id != normalized_id:
+                  raise SystemExit(f"Unexpected {platform} libshaderc bundle ID in {plist_path}: {current_id!r}")
+          if "ios-arm64" not in found["ios"] or "tvos-arm64_arm64e" not in found["tvos"]:
+              raise SystemExit(f"Missing iOS/tvOS device libshaderc slices: {found}")
+          print(f"Validated libshaderc_combined slices {found}; normalized {changed}")
+          PY
 
       - name: Show Xcode version
         run: xcodebuild -version
@@ -38,15 +78,9 @@ jobs:
       - name: Build iOS
         id: build-ios
         continue-on-error: true
-        env:
-          IS_KSPLAYER_TEST: ${{ github.ref == 'refs/heads/test/avplayer' }}
         run: |
           set -euo pipefail
           BUILD_NUMBER=$((1000 + GITHUB_RUN_NUMBER))
-          BUILD_SETTINGS=(CODE_SIGNING_ALLOWED=NO)
-          if [[ "$IS_KSPLAYER_TEST" == "true" ]]; then
-            BUILD_SETTINGS+=(VALIDATE_PRODUCT=NO)
-          fi
           xcodebuild \
             -project TVBoxSwift.xcodeproj \
             -scheme TVBox-iOS \
@@ -55,7 +89,7 @@ jobs:
             -destination generic/platform=iOS \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             "CURRENT_PROJECT_VERSION=$BUILD_NUMBER" \
-            "${BUILD_SETTINGS[@]}" \
+            CODE_SIGNING_ALLOWED=NO \
             build
 
       - name: Package iOS unsigned IPA
@@ -67,36 +101,6 @@ jobs:
           APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/TVBox-iOS.app"
           PAYLOAD_DIRECTORY="$RUNNER_TEMP/ipa/ios/Payload"
           test -d "$APP_PATH"
-          python3 - "$APP_PATH" <<'PY'
-          import pathlib
-          import plistlib
-          import re
-          import sys
-
-          app_path = pathlib.Path(sys.argv[1])
-          target_path = app_path / "Frameworks/libshaderc_combined.framework/Info.plist"
-          if not target_path.is_file():
-              raise SystemExit(f"Missing FFmpegKit framework plist: {target_path}")
-          with target_path.open("rb") as source:
-              target_info = plistlib.load(source)
-          original_id = "com.kintan.ksplayer.libshaderc_combined"
-          normalized_id = "com.kintan.ksplayer.libshaderc-combined"
-          current_id = target_info.get("CFBundleIdentifier")
-          if current_id == original_id:
-              target_info["CFBundleIdentifier"] = normalized_id
-              with target_path.open("wb") as destination:
-                  plistlib.dump(target_info, destination)
-              print(f"Normalized {target_path}: {original_id} -> {normalized_id}")
-          elif current_id != normalized_id:
-              raise SystemExit(f"Unexpected libshaderc bundle identifier: {current_id!r}")
-
-          for plist_path in app_path.glob("Frameworks/*.framework/Info.plist"):
-              with plist_path.open("rb") as source:
-                  info = plistlib.load(source)
-              bundle_id = info.get("CFBundleIdentifier")
-              if not isinstance(bundle_id, str) or not re.fullmatch(r"[A-Za-z0-9.-]+", bundle_id):
-                  raise SystemExit(f"Invalid framework bundle identifier in {plist_path}: {bundle_id!r}")
-          PY
           APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")
           BUILD_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")
           IPA_NAME="TVBox-iOS-${APP_VERSION}-${BUILD_VERSION}-unsigned.ipa"
@@ -136,15 +140,9 @@ jobs:
         id: build-tvos
         if: ${{ !cancelled() }}
         continue-on-error: true
-        env:
-          IS_KSPLAYER_TEST: ${{ github.ref == 'refs/heads/test/avplayer' }}
         run: |
           set -euo pipefail
           BUILD_NUMBER=$((1000 + GITHUB_RUN_NUMBER))
-          BUILD_SETTINGS=(CODE_SIGNING_ALLOWED=NO)
-          if [[ "$IS_KSPLAYER_TEST" == "true" ]]; then
-            BUILD_SETTINGS+=(VALIDATE_PRODUCT=NO)
-          fi
           xcodebuild \
             -project TVBoxSwift.xcodeproj \
             -scheme TVBox-tvOS \
@@ -153,7 +151,7 @@ jobs:
             -destination generic/platform=tvOS \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             "CURRENT_PROJECT_VERSION=$BUILD_NUMBER" \
-            "${BUILD_SETTINGS[@]}" \
+            CODE_SIGNING_ALLOWED=NO \
             build
 
       - name: Package tvOS unsigned IPA
@@ -165,36 +163,6 @@ jobs:
           APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-appletvos/TVBox-tvOS.app"
           PAYLOAD_DIRECTORY="$RUNNER_TEMP/ipa/tvos/Payload"
           test -d "$APP_PATH"
-          python3 - "$APP_PATH" <<'PY'
-          import pathlib
-          import plistlib
-          import re
-          import sys
-
-          app_path = pathlib.Path(sys.argv[1])
-          target_path = app_path / "Frameworks/libshaderc_combined.framework/Info.plist"
-          if not target_path.is_file():
-              raise SystemExit(f"Missing FFmpegKit framework plist: {target_path}")
-          with target_path.open("rb") as source:
-              target_info = plistlib.load(source)
-          original_id = "com.kintan.ksplayer.libshaderc_combined"
-          normalized_id = "com.kintan.ksplayer.libshaderc-combined"
-          current_id = target_info.get("CFBundleIdentifier")
-          if current_id == original_id:
-              target_info["CFBundleIdentifier"] = normalized_id
-              with target_path.open("wb") as destination:
-                  plistlib.dump(target_info, destination)
-              print(f"Normalized {target_path}: {original_id} -> {normalized_id}")
-          elif current_id != normalized_id:
-              raise SystemExit(f"Unexpected libshaderc bundle identifier: {current_id!r}")
-
-          for plist_path in app_path.glob("Frameworks/*.framework/Info.plist"):
-              with plist_path.open("rb") as source:
-                  info = plistlib.load(source)
-              bundle_id = info.get("CFBundleIdentifier")
-              if not isinstance(bundle_id, str) or not re.fullmatch(r"[A-Za-z0-9.-]+", bundle_id):
-                  raise SystemExit(f"Invalid framework bundle identifier in {plist_path}: {bundle_id!r}")
-          PY
           APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")
           BUILD_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")
           IPA_NAME="TVBox-tvOS-${APP_VERSION}-${BUILD_VERSION}-unsigned.ipa"
