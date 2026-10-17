@@ -13,6 +13,9 @@ struct SettingsView: View {
     @EnvironmentObject private var catalog: CatalogStore
     @AppStorage("tvbox.autoNext") private var autoNextEpisode = true
     @AppStorage("tvbox.skipOpeningSeconds") private var skipOpeningSeconds = 0
+    @AppStorage("tvbox.vlc.hardwareDecoding") private var vlcHardwareDecoding = true
+    @AppStorage("tvbox.vlc.networkCachingMilliseconds") private var vlcNetworkCachingMilliseconds = 3000
+    @AppStorage("tvbox.vlc.deinterlace") private var vlcDeinterlace = 0
     @State private var endpoint = ""
     @FocusState private var isEndpointFocused: Bool
     @State private var imageCacheSize: Int64 = 0
@@ -139,6 +142,32 @@ struct SettingsView: View {
                     }
                 }
                 Text("断点续播优先于片头跳过。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("VLC 高级设置") {
+                Toggle("硬件解码", isOn: $vlcHardwareDecoding)
+                Text("默认开启。修改后重新打开播放页生效。关闭后由软件解码，设备负载可能增加。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                Picker("网络缓存", selection: $vlcNetworkCachingMilliseconds) {
+                    Text("1 秒").tag(1000)
+                    Text("3 秒（推荐）").tag(3000)
+                    Text("5 秒").tag(5000)
+                    Text("10 秒").tag(10000)
+                }
+                Text("较长缓存可能减少网络波动导致的卡顿，也会增加开播和直播延迟。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                Picker("隔行视频处理", selection: $vlcDeinterlace) {
+                    Text("关闭").tag(0)
+                    Text("自动检测").tag(-1)
+                    Text("强制开启").tag(1)
+                }
+                Text("默认关闭。自动检测和强制开启会启用 VLC 的去隔行滤镜，效果与稳定性取决于设备和视频。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

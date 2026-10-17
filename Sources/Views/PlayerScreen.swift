@@ -251,13 +251,15 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
     init(request: PlaybackRequest) {
         self.request = request
         title = request.title
-        player = VLCMediaPlayer(options: ["--hw-dec"])
+        let hardwareDecodingEnabled = UserDefaults.standard.object(forKey: "tvbox.vlc.hardwareDecoding") as? Bool ?? true
+        player = VLCMediaPlayer(options: [hardwareDecodingEnabled ? "--hw-dec" : "--no-hw-dec"])
         super.init()
         player.delegate = self
 #if os(iOS)
         configureAudioSession()
 #endif
         player.media = makeMedia()
+        applyDeinterlacePreference()
         parseMediaIfNeeded()
         refreshProgress()
         startProgressUpdates()
@@ -283,6 +285,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         reportedDurationMilliseconds = 0
         player.stop()
         player.media = makeMedia()
+        applyDeinterlacePreference()
         isAwaitingCatchupMediaSample = request.catchupWindow != nil
         parseMediaIfNeeded()
         setAspectRatio(aspectRatio, label: aspectRatioLabel)
@@ -337,6 +340,7 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
         subtitleTracks = []
         didApplyResumePosition = false
         player.media = makeMedia()
+        applyDeinterlacePreference()
         parseMediaIfNeeded()
         setAspectRatio(aspectRatio, label: aspectRatioLabel)
         if autoplay {
@@ -629,6 +633,10 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
 
     private func makeMedia() -> VLCMedia? {
         guard let media = VLCMedia(url: request.url) else { return nil }
+        let allowedCachingValues = [1000, 3000, 5000, 10000]
+        let requestedCaching = UserDefaults.standard.object(forKey: "tvbox.vlc.networkCachingMilliseconds") as? Int ?? 3000
+        let networkCaching = allowedCachingValues.contains(requestedCaching) ? requestedCaching : 3000
+        media.addOption(":network-caching=\(networkCaching)")
         if let userAgent = header(named: "User-Agent") {
             media.addOption(":http-user-agent=\(userAgent)")
         }
@@ -644,6 +652,18 @@ final class VLCPlaybackSession: NSObject, ObservableObject, VLCMediaPlayerDelega
             }
         }
         return media
+    }
+
+    private func applyDeinterlacePreference() {
+        let preference = UserDefaults.standard.integer(forKey: "tvbox.vlc.deinterlace")
+        switch preference {
+        case -1:
+            player.setDeinterlace(.auto, withFilter: "blend")
+        case 1:
+            player.setDeinterlace(.on, withFilter: "blend")
+        default:
+            player.setDeinterlace(.off, withFilter: "blend")
+        }
     }
 
     private func parseMediaIfNeeded() {
@@ -2134,10 +2154,14 @@ struct PlayerScreen: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     additionalPlaybackOptions
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .clipped()
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .glassEffect(.regular, in: Capsule())
+            .clipShape(Capsule())
 
             if session.canSeek {
                 HStack(spacing: 6) {
@@ -3733,11 +3757,15 @@ struct PlayerScreen: View {
                 HStack(spacing: 8) {
                     aspectRatioMenu
                     ScrollView(.horizontal, showsIndicators: false) { additionalPlaybackOptions }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .clipped()
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 #if os(iOS)
                 .glassEffect(.regular, in: Capsule())
+                .clipShape(Capsule())
                 #endif
             } else {
                 playbackOptions
