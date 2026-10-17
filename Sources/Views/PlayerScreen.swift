@@ -1393,6 +1393,7 @@ struct PlayerScreen: View {
                                 closeEdgeWidth: max(28, geometry.safeAreaInsets.leading + 18)
                             )
                         }
+                        .allowsHitTesting(landscapeLivePanel == nil)
                         .zIndex(1)
                         #endif
 
@@ -1967,11 +1968,11 @@ struct PlayerScreen: View {
             withAnimation(.easeInOut(duration: 0.2)) { areControlsVisible = true }
         }
         #if os(tvOS)
-        let hideDelay: UInt64 = 15_000_000_000
+        let hideDelay: UInt64 = 3_000_000_000
         playerSurfaceFocused = false
         if wasHidden { restorePrimaryControlFocus() }
         #else
-        let hideDelay: UInt64 = 8_000_000_000
+        let hideDelay: UInt64 = 3_000_000_000
         #endif
         guard canAutoHideControls else { return }
         controlsHideTask = Task { @MainActor in
@@ -3527,7 +3528,6 @@ struct PlayerScreen: View {
         }
         .foregroundStyle(Color(uiColor: .label))
         .contentShape(Rectangle())
-        .simultaneousGesture(TapGesture().onEnded { })
         .accessibilityAction(.escape) { toggleLivePanel(panel) }
         #if os(tvOS)
         .focusSection()
