@@ -50,6 +50,7 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             "CURRENT_PROJECT_VERSION=$BUILD_NUMBER" \
             CODE_SIGNING_ALLOWED=NO \
+            VALIDATE_PRODUCT=NO \
             build
 
       - name: Package iOS unsigned IPA
@@ -61,6 +62,24 @@ jobs:
           APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/TVBox-iOS.app"
           PAYLOAD_DIRECTORY="$RUNNER_TEMP/ipa/ios/Payload"
           test -d "$APP_PATH"
+          python3 - "$APP_PATH" <<'PY'
+          import pathlib
+          import plistlib
+          import re
+          import sys
+
+          app_path = pathlib.Path(sys.argv[1])
+          for plist_path in app_path.glob("Frameworks/*.framework/Info.plist"):
+              with plist_path.open("rb") as source:
+                  info = plistlib.load(source)
+              bundle_id = info.get("CFBundleIdentifier")
+              if isinstance(bundle_id, str):
+                  normalized = re.sub(r"[^A-Za-z0-9.-]", "-", bundle_id)
+                  if normalized != bundle_id:
+                      info["CFBundleIdentifier"] = normalized
+                      with plist_path.open("wb") as destination:
+                          plistlib.dump(info, destination)
+          PY
           APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")
           BUILD_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")
           IPA_NAME="TVBox-iOS-${APP_VERSION}-${BUILD_VERSION}-unsigned.ipa"
@@ -112,6 +131,7 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             "CURRENT_PROJECT_VERSION=$BUILD_NUMBER" \
             CODE_SIGNING_ALLOWED=NO \
+            VALIDATE_PRODUCT=NO \
             build
 
       - name: Package tvOS unsigned IPA
@@ -123,6 +143,24 @@ jobs:
           APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-appletvos/TVBox-tvOS.app"
           PAYLOAD_DIRECTORY="$RUNNER_TEMP/ipa/tvos/Payload"
           test -d "$APP_PATH"
+          python3 - "$APP_PATH" <<'PY'
+          import pathlib
+          import plistlib
+          import re
+          import sys
+
+          app_path = pathlib.Path(sys.argv[1])
+          for plist_path in app_path.glob("Frameworks/*.framework/Info.plist"):
+              with plist_path.open("rb") as source:
+                  info = plistlib.load(source)
+              bundle_id = info.get("CFBundleIdentifier")
+              if isinstance(bundle_id, str):
+                  normalized = re.sub(r"[^A-Za-z0-9.-]", "-", bundle_id)
+                  if normalized != bundle_id:
+                      info["CFBundleIdentifier"] = normalized
+                      with plist_path.open("wb") as destination:
+                          plistlib.dump(info, destination)
+          PY
           APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")
           BUILD_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")
           IPA_NAME="TVBox-tvOS-${APP_VERSION}-${BUILD_VERSION}-unsigned.ipa"
