@@ -42,7 +42,7 @@
 
 ## 播放器
 
-播放器使用 AVPlayer，支持暂停与继续、进度条、前后跳转 15 秒、上一集 / 下一集或频道、播放中切换线路、播放速度、音轨与字幕选择、片头跳过设置、自动连播、续播和画中画。画面比例提供原始与填充模式。AVPlayer 主要支持 HTTP/HTTPS 上的 Apple 平台媒体格式；RTSP、RTMP、部分容器/编码格式不兼容。User-Agent 和 Cookie 使用 AVFoundation 支持的选项；Referer 与任意自定义请求头不能可靠发送，遇到此类源会明确报错。请用实际片源验证后再作为正式播放器发布。
+播放器使用 KSPlayer 2.3.4，优先使用 FFmpeg 内核并在失败时回退到 AVPlayer。支持 HTTP、RTSP、RTMP 等 KSPlayer/FFmpeg 支持的地址和媒体格式、请求头、暂停与继续、进度条、前后跳转 15 秒、上一集 / 下一集或频道、播放中切换线路、倍速、音轨与字幕、片头跳过、自动连播、续播和画中画。设置页提供硬件解码、异步解码、精确定位、快速打开、自动字幕、隔行处理、缓冲和字幕外观选项；硬件解码默认开启。具体协议、编码、字幕和 PiP 支持依赖 KSPlayer 及设备能力，仍需使用实际片源验证。
 
 iOS 竖屏将播放、暂停和跳转按钮放在屏幕中央，进度条与播放选项放在底部；横屏和 tvOS 使用宽屏布局。播放画面单击可显示或隐藏控件；双击中央区域可暂停或继续，双击左右区域可前后跳转 15 秒；左右滑动调整进度，左侧上下滑动调整亮度，右侧上下滑动调整音量。
 
@@ -50,7 +50,7 @@ iOS 竖屏将播放、暂停和跳转按钮放在屏幕中央，进度条与播�
 
 1. 使用安装了 iOS 和 tvOS SDK 的完整 Xcode 打开 `TVBoxSwift.xcodeproj`。
 2. 选择 `TVBox-iOS` 或 `TVBox-tvOS` scheme，在模拟器或设备上运行。
-3. 设备构建需要配置签名团队。推送 `test/avplayer` 会由 Actions 构建 iOS 与 tvOS，并创建单独的 AVPlayer prerelease；其中 IPA 未签名，安装到设备前需要签名。
+3. 设备构建需要配置签名团队。推送 `test/avplayer` 会由 Actions 构建 iOS 与 tvOS，并创建单独的 KSPlayer prerelease；其中 IPA 未签名，安装到设备前需要签名。KSPlayer 与 FFmpegKit 首次 SwiftPM 解析需要下载较大的依赖，Actions 会缓存 SwiftPM 源码包。
 
 项目最低支持 iOS 26.0 和 tvOS 26.0。推送到 `main`、向 `main` 提交 Pull Request 或手动运行 GitHub Actions 时，工作流会分别构建 iOS 与 tvOS 设备版本，将未签名 `.app` 打包为 `.ipa` 并保留 7 天。安装到设备或发布前仍需进行签名；真实流媒体和弹幕播放也需后续在设备上验证。失败任务可从对应的 Actions 运行页面重新执行。
 

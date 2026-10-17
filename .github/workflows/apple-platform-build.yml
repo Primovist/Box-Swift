@@ -24,6 +24,14 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v7
 
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/DerivedData/SourcePackages
+          key: ${{ runner.os }}-xcode26-swiftpm-${{ hashFiles('TVBoxSwift.xcodeproj/project.pbxproj', 'TVBoxSwift.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-xcode26-swiftpm-
+
       - name: Show Xcode version
         run: xcodebuild -version
 
@@ -250,7 +258,7 @@ jobs:
               output.write(f"version={version}\n")
               output.write(f"build_number={build_number}\n")
               output.write(f"tag=v{version}-build.{build_number}\n")
-              output.write(f"test_tag=avplayer-test-build.{build_number}\n")
+              output.write(f"test_tag=ksplayer-test-build.{build_number}\n")
           PY
 
       - name: Publish unsigned IPAs
@@ -260,14 +268,14 @@ jobs:
           TEST_RELEASE_TAG: ${{ steps.release-version.outputs.test_tag }}
           RELEASE_VERSION: ${{ steps.release-version.outputs.version }}
           BUILD_NUMBER: ${{ steps.release-version.outputs.build_number }}
-          IS_AVPLAYER_TEST: ${{ github.ref == 'refs/heads/test/avplayer' }}
+          IS_KSPLAYER_TEST: ${{ github.ref == 'refs/heads/test/avplayer' }}
         run: |
           set -euo pipefail
-          if [[ "$IS_AVPLAYER_TEST" == "true" ]]; then
+          if [[ "$IS_KSPLAYER_TEST" == "true" ]]; then
             TAG="$TEST_RELEASE_TAG"
-            TITLE="TV Box AVPlayer test (Build $BUILD_NUMBER)"
+            TITLE="TV Box KSPlayer test (Build $BUILD_NUMBER)"
             RELEASE_FLAGS=(--prerelease --latest=false)
-            NOTES="Experimental AVPlayer build from $GITHUB_SHA. Unsigned IPAs require signing before device installation. RTSP/RTMP, non-HTTP media formats, and Referer/custom HTTP headers are not supported by this build."
+            NOTES="Experimental KSPlayer 2.3.4 build from $GITHUB_SHA. FFmpeg is the primary playback engine and AVPlayer is the fallback. Hardware decoding is enabled by default. Unsigned IPAs require signing before device installation."
           else
             TAG="$RELEASE_TAG"
             TITLE="TV Box $RELEASE_VERSION (Build $BUILD_NUMBER)"

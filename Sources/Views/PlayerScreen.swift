@@ -186,7 +186,7 @@ struct PlayerScreen: View {
             .first { $0.activationState == .foregroundActive }?.screen
     }
 #endif
-    @StateObject private var session: AVPlaybackSession
+    @StateObject private var session: KSPlaybackSession
     @State private var isScrubbing = false
     @State private var seekValue: Double = 0
     @State private var isSwitchingEpisode = false
@@ -259,7 +259,7 @@ struct PlayerScreen: View {
     #endif
 
     init(request: PlaybackRequest) {
-        _session = StateObject(wrappedValue: AVPlaybackSession(request: request))
+        _session = StateObject(wrappedValue: KSPlaybackSession(request: request))
     }
 
     var body: some View {
@@ -401,7 +401,7 @@ struct PlayerScreen: View {
                     }
                     #endif
                     ZStack {
-                        AVPlayerVideoSurface(session: session)
+                        KSPlayerVideoSurface(session: session)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .allowsHitTesting(false)
                             .zIndex(0)
@@ -410,6 +410,10 @@ struct PlayerScreen: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .allowsHitTesting(false)
                             .zIndex(1)
+                        KSSubtitleOverlay(model: session.subtitleModel)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .allowsHitTesting(false)
+                            .zIndex(2)
                         #if os(iOS)
                         GeometryReader { interaction in
                             touchInteractionLayer(
@@ -3262,7 +3266,7 @@ struct PlayerScreen: View {
     private func trackMenu(
         title: String,
         systemImage: String,
-        options: [AVTrackOption],
+        options: [KSPlaybackTrackOption],
         selectedIndex: Int,
         select: @escaping (Int) -> Void
     ) -> some View {

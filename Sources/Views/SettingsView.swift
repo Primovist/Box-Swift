@@ -13,6 +13,17 @@ struct SettingsView: View {
     @EnvironmentObject private var catalog: CatalogStore
     @AppStorage("tvbox.autoNext") private var autoNextEpisode = true
     @AppStorage("tvbox.skipOpeningSeconds") private var skipOpeningSeconds = 0
+    @AppStorage("tvbox.ksplayer.hardwareDecode") private var ksHardwareDecode = true
+    @AppStorage("tvbox.ksplayer.asynchronousDecompression") private var ksAsyncDecompression = false
+    @AppStorage("tvbox.ksplayer.accurateSeek") private var ksAccurateSeek = false
+    @AppStorage("tvbox.ksplayer.secondOpen") private var ksSecondOpen = false
+    @AppStorage("tvbox.ksplayer.autoSelectEmbeddedSubtitle") private var ksAutoSelectEmbeddedSubtitle = true
+    @AppStorage("tvbox.ksplayer.autoDeinterlace") private var ksAutoDeinterlace = false
+    @AppStorage("tvbox.ksplayer.maximumBufferSeconds") private var ksMaximumBufferSeconds = 30.0
+    @AppStorage("tvbox.ksplayer.preferredBufferSeconds") private var ksPreferredBufferSeconds = 3.0
+    @AppStorage("tvbox.ksplayer.subtitleFontSize") private var ksSubtitleFontSize = 26.0
+    @AppStorage("tvbox.ksplayer.subtitleBold") private var ksSubtitleBold = false
+    @AppStorage("tvbox.ksplayer.subtitleDelay") private var ksSubtitleDelay = 0.0
     @State private var endpoint = ""
     @FocusState private var isEndpointFocused: Bool
     @State private var imageCacheSize: Int64 = 0
@@ -141,6 +152,55 @@ struct SettingsView: View {
                 Text("断点续播优先于片头跳过。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Toggle("硬件解码", isOn: $ksHardwareDecode)
+                Toggle("异步硬件解码", isOn: $ksAsyncDecompression)
+                    .disabled(!ksHardwareDecode)
+                Toggle("精确拖动定位", isOn: $ksAccurateSeek)
+                Toggle("快速打开媒体流", isOn: $ksSecondOpen)
+                Toggle("自动选择内嵌字幕", isOn: $ksAutoSelectEmbeddedSubtitle)
+                Toggle("自动检测隔行视频", isOn: $ksAutoDeinterlace)
+
+                Picker("最长缓冲时长", selection: $ksMaximumBufferSeconds) {
+                    ForEach([10.0, 20.0, 30.0, 45.0, 60.0], id: \.self) { seconds in
+                        Text("\(Int(seconds)) 秒").tag(seconds)
+                    }
+                }
+                Picker("开始播放前缓冲", selection: $ksPreferredBufferSeconds) {
+                    ForEach([1.0, 2.0, 3.0, 5.0, 8.0], id: \.self) { seconds in
+                        Text("\(Int(seconds)) 秒").tag(seconds)
+                    }
+                }
+                Picker("字幕字号", selection: $ksSubtitleFontSize) {
+                    ForEach([18.0, 22.0, 26.0, 30.0, 34.0], id: \.self) { size in
+                        Text("\(Int(size)) pt").tag(size)
+                    }
+                }
+                Toggle("字幕加粗", isOn: $ksSubtitleBold)
+                HStack {
+                    Text("字幕延迟")
+                    Spacer()
+                    Button {
+                        ksSubtitleDelay = max(-10, ksSubtitleDelay - 0.5)
+                    } label: {
+                        Image(systemName: "minus.circle")
+                    }
+                    .accessibilityLabel("减少字幕延迟")
+                    Text(String(format: "%.1f 秒", ksSubtitleDelay))
+                        .monospacedDigit()
+                    Button {
+                        ksSubtitleDelay = min(10, ksSubtitleDelay + 0.5)
+                    } label: {
+                        Image(systemName: "plus.circle")
+                    }
+                    .accessibilityLabel("增加字幕延迟")
+                }
+            } header: {
+                Text("KSPlayer 解码与缓冲")
+            } footer: {
+                Text("硬件解码默认开启；设备或视频编码不支持时 KSPlayer 会回退软件解码。快速打开可缩短探测时间，但少数直播流可能需要关闭。设置在下次播放时生效。")
             }
 
             Section("图片缓存") {
