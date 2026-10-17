@@ -3461,6 +3461,9 @@ struct PlayerScreen: View {
     ) -> some View {
         let onLeft = panel != .sources
         return ZStack(alignment: onLeft ? .leading : .trailing) {
+            Color.clear
+                .contentShape(Rectangle())
+                .highPriorityGesture(TapGesture().onEnded { toggleLivePanel(panel) })
             liveSidePanel(panel, size: size, safeAreaInsets: safeAreaInsets)
         }
         .frame(
