@@ -33,6 +33,7 @@ jobs:
             ${{ runner.os }}-xcode26-swiftpm-ffmpeg-bundleid-v1-
 
       - name: Resolve KSPlayer packages and repair framework metadata
+        id: repair-ffmpeg
         if: ${{ github.ref == 'refs/heads/test/avplayer' || github.head_ref == 'test/avplayer' }}
         run: |
           set -euo pipefail
@@ -44,6 +45,7 @@ jobs:
           python3 - "$RUNNER_TEMP/DerivedData/SourcePackages/checkouts/FFmpegKit/Sources/libshaderc_combined.xcframework" <<'PY'
           import pathlib
           import plistlib
+          import stat
           import sys
 
           xcframework_path = pathlib.Path(sys.argv[1])
@@ -51,6 +53,7 @@ jobs:
           normalized_id = "com.kintan.ksplayer.libshaderc-combined"
           found = {"ios": [], "tvos": []}
           changed = {"ios": 0, "tvos": 0}
+          pending = []
           for plist_path in xcframework_path.glob("*/libshaderc_combined.framework/Info.plist"):
               slice_name = plist_path.parents[1].name
               platform = "ios" if slice_name.startswith("ios-") else "tvos" if slice_name.startswith("tvos-") else None
@@ -61,14 +64,21 @@ jobs:
                   info = plistlib.load(source)
               current_id = info.get("CFBundleIdentifier")
               if current_id == original_id:
-                  info["CFBundleIdentifier"] = normalized_id
-                  with plist_path.open("wb") as destination:
-                      plistlib.dump(info, destination)
-                  changed[platform] += 1
+                  pending.append((platform, plist_path, info))
               elif current_id != normalized_id:
                   raise SystemExit(f"Unexpected {platform} libshaderc bundle ID in {plist_path}: {current_id!r}")
           if "ios-arm64" not in found["ios"] or "tvos-arm64_arm64e" not in found["tvos"]:
               raise SystemExit(f"Missing iOS/tvOS device libshaderc slices: {found}")
+          for platform, plist_path, info in pending:
+              info["CFBundleIdentifier"] = normalized_id
+              plist_path.chmod(plist_path.stat().st_mode | stat.S_IWUSR)
+              with plist_path.open("wb") as destination:
+                  plistlib.dump(info, destination)
+              with plist_path.open("rb") as source:
+                  written_id = plistlib.load(source).get("CFBundleIdentifier")
+              if written_id != normalized_id:
+                  raise SystemExit(f"Failed to normalize {platform} libshaderc bundle ID in {plist_path}: {written_id!r}")
+              changed[platform] += 1
           print(f"Validated libshaderc_combined slices {found}; normalized {changed}")
           PY
 
@@ -77,6 +87,7 @@ jobs:
 
       - name: Build iOS
         id: build-ios
+        if: ${{ !cancelled() && (steps.repair-ffmpeg.outcome == 'success' || steps.repair-ffmpeg.outcome == 'skipped') }}
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -138,7 +149,7 @@ jobs:
 
       - name: Build tvOS
         id: build-tvos
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (steps.repair-ffmpeg.outcome == 'success' || steps.repair-ffmpeg.outcome == 'skipped') }}
         continue-on-error: true
         run: |
           set -euo pipefail
