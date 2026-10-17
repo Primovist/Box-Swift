@@ -38,9 +38,15 @@ jobs:
       - name: Build iOS
         id: build-ios
         continue-on-error: true
+        env:
+          IS_KSPLAYER_TEST: ${{ github.ref == 'refs/heads/test/avplayer' }}
         run: |
           set -euo pipefail
           BUILD_NUMBER=$((1000 + GITHUB_RUN_NUMBER))
+          BUILD_SETTINGS=(CODE_SIGNING_ALLOWED=NO)
+          if [[ "$IS_KSPLAYER_TEST" == "true" ]]; then
+            BUILD_SETTINGS+=(VALIDATE_PRODUCT=NO)
+          fi
           xcodebuild \
             -project TVBoxSwift.xcodeproj \
             -scheme TVBox-iOS \
@@ -49,8 +55,7 @@ jobs:
             -destination generic/platform=iOS \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             "CURRENT_PROJECT_VERSION=$BUILD_NUMBER" \
-            CODE_SIGNING_ALLOWED=NO \
-            VALIDATE_PRODUCT=NO \
+            "${BUILD_SETTINGS[@]}" \
             build
 
       - name: Package iOS unsigned IPA
@@ -131,9 +136,15 @@ jobs:
         id: build-tvos
         if: ${{ !cancelled() }}
         continue-on-error: true
+        env:
+          IS_KSPLAYER_TEST: ${{ github.ref == 'refs/heads/test/avplayer' }}
         run: |
           set -euo pipefail
           BUILD_NUMBER=$((1000 + GITHUB_RUN_NUMBER))
+          BUILD_SETTINGS=(CODE_SIGNING_ALLOWED=NO)
+          if [[ "$IS_KSPLAYER_TEST" == "true" ]]; then
+            BUILD_SETTINGS+=(VALIDATE_PRODUCT=NO)
+          fi
           xcodebuild \
             -project TVBoxSwift.xcodeproj \
             -scheme TVBox-tvOS \
@@ -142,8 +153,7 @@ jobs:
             -destination generic/platform=tvOS \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             "CURRENT_PROJECT_VERSION=$BUILD_NUMBER" \
-            CODE_SIGNING_ALLOWED=NO \
-            VALIDATE_PRODUCT=NO \
+            "${BUILD_SETTINGS[@]}" \
             build
 
       - name: Package tvOS unsigned IPA
